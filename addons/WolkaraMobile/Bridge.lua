@@ -2,12 +2,21 @@
 -- These transient overrides do not overwrite the user's saved bindings.
 local _,ns=...
 local Bridge=ns.Register("Host controls",{})
+-- WoW's canonical chord order is ALT, CTRL, SHIFT. Use F6/F7 so a lost
+-- modifier cannot become one of the default F8-F12 bag shortcuts.
+local keys={"ALT-CTRL-SHIFT-F6","ALT-CTRL-SHIFT-F7","ALT-CTRL-F6","ALT-CTRL-F7",
+    "CTRL-SHIFT-F6","CTRL-SHIFT-F7","ALT-SHIFT-F6","ALT-SHIFT-F7"}
 function Bridge:Init()
     local bridge=CreateFrame("Frame","WolkaraMobileBridge",UIParent,"SecureHandlerBaseTemplate")
     ns.bridge=bridge
     function bridge:Command(command)
-        if command=="on" then ns.SetEnabled(true)
-        elseif command=="off" then ns.SetEnabled(false)
+        ns.hostCommands=(ns.hostCommands or 0)+1
+        if command=="on" then
+            ns.SetEnabled(true)
+            if not InCombatLockdown() then ns.Print("Mobile interface enabled.") end
+        elseif command=="off" then
+            ns.SetEnabled(false)
+            if not InCombatLockdown() then ns.Print("Mobile interface disabled.") end
         elseif command=="edit" then ns.SetEditing(true)
         elseif command=="done" then ns.FinishEditing() end
     end
@@ -23,7 +32,7 @@ function Bridge:Init()
             elseif command=="clear" then bridge:SetAttribute("gesture",nil)
             else bridge:CallMethod("Command",command) end
         ]=])
-        SetOverrideBindingClick(bridge,false,"CTRL-ALT-SHIFT-F"..(4+index),b:GetName())
+        SetOverrideBindingClick(bridge,false,keys[index],b:GetName())
     end
     -- Suppress protected actions on drag release, including when already in combat.
     -- This is a secure wrapper, not a late insecure PreClick attribute change.
@@ -36,4 +45,9 @@ function Bridge:Init()
         ]=]) end
     end
     if ns.Bags then ns.Bags:Watch() end
+    SLASH_WOLKARAMOBILE1="/wolkaramobile"
+    SlashCmdList.WOLKARAMOBILE=function()
+        ns.Print("Mobile interface v1.0.1: "..(ns.enabled and "enabled" or "disabled")..
+            "; host commands received: "..(ns.hostCommands or 0).."; module errors: "..(ns.errors or 0)..".")
+    end
 end

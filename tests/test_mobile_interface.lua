@@ -25,6 +25,7 @@ function ShowUIPanel(f) f:Show() end
 function HideUIPanel(f) f:Hide() end
 function UpdateContainerFrameAnchors() end
 C_Timer={After=function(_,fn) fn() end}
+SlashCmdList={}
 DEFAULT_CHAT_FRAME={AddMessage=function(_,s) messages[#messages+1]=s end}
 local Frame={}
 local function Noop() end
@@ -60,7 +61,11 @@ function Frame:SetAttribute(key,value) assert(secure or not(combat and self.prot
 function Frame:GetAttribute(key) return self.attrs[key] end
 function Frame:SetFrameRef(key,value) self.refs[key]=value end
 function Frame:GetFrameRef(key) return self.refs[key] end
-function Frame:CallMethod(key,...) return self[key](self,...) end
+function Frame:CallMethod(key,...)
+    local previous=secure; secure=false
+    local value=self[key](self,...)
+    secure=previous; return value
+end
 function Frame:GetID() return self.id or 0 end
 function Frame:SetID(id) self.id=id end
 function Frame:SetFrameLevel(n) self.level=n end
@@ -121,8 +126,47 @@ end
 ns.hostSession="fixture-session"
 Event("ADDON_LOADED","WolkaraMobile"); Clean()
 Event("PLAYER_LOGIN"); assert(not ns.enabled and original:GetScale()==.8)
-assert(bindings["CTRL-ALT-SHIFT-F5"]=="WolkaraMobileCommand1")
-assert(bindings["CTRL-ALT-SHIFT-F12"]=="WolkaraMobileCommand8")
+assert(bindings["ALT-CTRL-SHIFT-F6"]=="WolkaraMobileCommand1")
+assert(bindings["ALT-SHIFT-F7"]=="WolkaraMobileCommand8")
+local tracePath=os.getenv("WOLKARA_MOBILE_EVENT_TRACE")
+if tracePath then
+    local modifiers={}; local received={}; local pendingKey
+    local modifierCodes={[58]="ALT",[61]="ALT",[59]="CTRL",[62]="CTRL",[56]="SHIFT",[60]="SHIFT",[55]="META",[54]="META"}
+    local bits={ALT=2^19,CTRL=2^18,SHIFT=2^17,META=2^20}
+    local function Has(n,bit) return n%(2*bit)>=bit end
+    local function Chord(code)
+        local parts={}
+        for _,key in ipairs({"ALT","CTRL","SHIFT","META"}) do if modifiers[key] then parts[#parts+1]=key end end
+        assert(code==97 or code==98,"bridge must not emit bag function keys")
+        parts[#parts+1]=code==97 and "F6" or "F7"
+        return table.concat(parts,"-")
+    end
+    for line in io.lines(tracePath) do
+        local cmd,kind,code,flags=line:match("^(%d+)\t(%d+)\t(%d+)\t(%d+)$")
+        cmd,kind,code,flags=tonumber(cmd),tonumber(kind),tonumber(code),tonumber(flags)
+        assert(cmd and kind and code and flags,"malformed trace")
+        if kind==12 then
+            local key=assert(modifierCodes[code],"invalid modifier transition")
+            modifiers[key]=Has(flags,bits[key])
+        elseif kind==10 then
+            pendingKey=Chord(code); assert(bindings[pendingKey],"native chord missing from addon: "..pendingKey)
+        elseif kind==11 then
+            assert(pendingKey==Chord(code),"modifier state lost before key-up")
+            local button=assert(_G[bindings[pendingKey]])
+            assert(button:GetName()=="WolkaraMobileCommand"..(cmd+1),"wrong bridge command")
+            local fn=assert(compile("return function(self) "..button:GetAttribute("_onclick").." end"))()
+            secure=true; fn(button); secure=false; received[cmd]=true; pendingKey=nil
+        else error("unexpected trace event") end
+    end
+    for cmd=0,7 do assert(received[cmd],"missing command round trip") end
+    assert(not pendingKey)
+    for _,held in pairs(modifiers) do assert(not held,"modifier left held") end
+    assert((ns.hostCommands or 0)>0 and not ns.errors)
+    ns.SetEnabled(false); ns.editing=false; ns.dirty=false; ns.bridge:SetAttribute("gesture",nil)
+    SlashCmdList.WOLKARAMOBILE(); assert(messages[#messages]:find("v1.0.1"))
+    print("MOBILE_BRIDGE_ROUNDTRIP_PASS: native modifier edges resolve all 8 actual addon bindings")
+end
+
 local function Mark(gesture) ns.bridge.attrs.gesture=gesture end
 slot:Click(); assert(clicks[#clicks]=="LeftButton") -- Disabled mode never converts.
 ns.SetEnabled(true); assert(ns.enabled and original:GetScale()<.8)

@@ -404,20 +404,38 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         [NSApp postEvent:event atStart:NO];
     }
 }
+- (void)postMobileModifierTransitionFrom:(NSEventModifierFlags)state to:(NSEventModifierFlags)target {
+    // Desktop consumers update their held-key state from flagsChanged, not
+    // necessarily from modifierFlags attached to a function-key event.
+    // Include the real left/right key code and its device-dependent bit.
+    for (NSUInteger i=0;i<sizeof AKModifierKeys/sizeof *AKModifierKeys;i++) {
+        if ((state & AKModifierKeys[i].bit) == (target & AKModifierKeys[i].bit)) continue;
+        state = AKModifiersAfterKey(state, AKModifierKeys[i].usage, (target & AKModifierKeys[i].bit) != 0);
+        NSEvent *event = [NSEvent new]; event.type = NSEventTypeFlagsChanged;
+        event.window = self.nsWindow; event.keyCode = AKKeyCode(AKModifierKeys[i].usage);
+        event.modifierFlags = state; event.characters = event.charactersIgnoringModifiers = @"";
+        event.timestamp = NSProcessInfo.processInfo.systemUptime;
+        [NSApp postEvent:event atStart:NO];
+    }
+}
 - (void)ak_mobileCommand:(AKMobileCommand)command {
     if (command > AKMobileDrag) return;
     if (command == AKMobileEdit) _mobileEditing = YES;
     if (command == AKMobileDone || command == AKMobileDisable) _mobileEditing = NO;
-    static const unsigned short codes[] = {96,97,98,100,101,109,103,111};
-    unichar character = 0xF708 + command; // NSF5FunctionKey…NSF12FunctionKey
+    NSEventModifierFlags control = NSEventModifierFlagControl, option = NSEventModifierFlagOption, shift = NSEventModifierFlagShift;
+    const NSEventModifierFlags masks[] = {control|option|shift, control|option|shift,
+        control|option, control|option, control|shift, control|shift, option|shift, option|shift};
+    // F6/F7 have no default bag action. Do not use F8-F12 as a transport.
+    unsigned short code = (command & 1) ? 98 : 97;
+    unichar character = 0xF709 + (command & 1); // NSF6FunctionKey / NSF7FunctionKey
     NSString *characters = [NSString stringWithCharacters:&character length:1];
-    NSEventModifierFlags modifiers = NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift;
-    [self postTextKey:codes[command] characters:characters unmodified:characters modifiers:modifiers];
-    // Restore the current hardware state, including held modifiers, after the chord.
-    NSEvent *restore = [NSEvent new]; restore.type = NSEventTypeFlagsChanged;
-    restore.window = self.nsWindow; restore.modifierFlags = _mods;
-    restore.timestamp = NSProcessInfo.processInfo.systemUptime;
-    [NSApp postEvent:restore atStart:NO];
+    NSEventModifierFlags hardware = _mods;
+    NSEventModifierFlags chord = AKModifiersReconciled(hardware, masks[command] | (hardware & NSEventModifierFlagCapsLock));
+    [self postMobileModifierTransitionFrom:hardware to:chord];
+    [self postTextKey:code characters:characters unmodified:characters modifiers:chord];
+    [self postMobileModifierTransitionFrom:chord to:hardware];
+    // _mods always remains UIKit's actual hardware state. No synthetic key or
+    // modifier remains held when the following mouse event reaches the client.
 }
 - (void)markMobileGesture:(AKMobileCommand)command {
     if (!_directMobile) return;

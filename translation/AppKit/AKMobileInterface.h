@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 
-// Companion addon commands are bound to CTRL-ALT-SHIFT-F5…F12.
+// Companion commands use modified F6/F7 chords (see Bridge.lua).
 // They originate only in explicit control actions or their individual touch gestures.
 typedef NS_ENUM(NSUInteger, AKMobileCommand) {
     AKMobileEnable, AKMobileDisable, AKMobileEdit, AKMobileDone,

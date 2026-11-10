@@ -97,8 +97,11 @@ WoW gameplay under this capability set remain untested.
   A quick swipe keeps camera movement and never turns into an item-use click.
   Physical mouse and trackpad clicks retain their normal meaning. Touch-ability
   circles remain a separate setting: move/disable them if they overlap new icons.
-  Internal CTRL-ALT-SHIFT-F5 through F12 bindings carry individual UI gestures;
-  they are temporary overrides and do not rewrite saved game bindings.
+  Internal modified F6/F7 bindings carry individual UI gestures;
+  they are temporary overrides and do not rewrite saved game bindings. Modifier
+  presses/releases are balanced around each command; F8–F12 bag keys are not sent.
+  The game chat confirms enable/disable. `/wolkaramobile` reports addon status
+  and received host commands for troubleshooting.
 - Movable touch controls, opacity and size settings, shoulder-position swapping,
   an alignment grid and haptics. The mouse/keyboard/microphone/key toolbar also
   moves in Edit layout.

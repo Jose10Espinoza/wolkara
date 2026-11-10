@@ -641,3 +641,34 @@ closed-app guard, and normal launch succeeded. Bundled addon files matched the P
 byte for byte. The device connection failed during the follow-up check, before
 companion-folder preparation could be verified. Reaching Ready on the Duo and
 in-game interaction remain pending user checks.
+
+## Mobile addon modifier bridge repair (2026-11-10)
+
+The first physical test reported that touches opened/closed bags instead of
+activating the mobile UI. The old bridge attached Control/Alt/Shift flags to
+function-key events without emitting their press transitions; its final
+flagsChanged event also had no valid modifier key code. A desktop consumer
+tracking modifier edges therefore saw unmodified function keys. The original
+fixture checked only event flags and missed this boundary.
+
+The bridge now emits balanced, correctly keyed left/right modifier transitions
+(including device-dependent bits), preserves held hardware modifiers and Caps
+Lock, and uses only modified F6/F7 instead of the F8-F12 bag keys. Addon bindings
+use WoW's canonical ALT-CTRL-SHIFT order. Enable/disable reports to the game chat;
+`/wolkaramobile` reports version, enabled state, host commands received and module
+errors. The companion addon version is 1.0.1.
+
+A strengthened native input consumer fails on the previous implementation at
+the missing modifier-state assertion and passes after the repair, including
+all eight commands, held right modifiers, Command and Caps Lock restoration.
+`tools/test_mobile_bridge.sh` replays the native event trace through the actual
+Lua bindings and secure snippets: all eight commands resolve correctly. Existing
+camera and addon gesture/layout tests pass. A clean signed Release build and
+bundle checks pass. Actual WoW interaction remains a physical-device check;
+no guest gameplay is automated by these tests.
+
+The repaired app was installed in place after the exact-bundle closed-app guard.
+The launcher also updated the companion folder: all ten shipped source/license
+files read back from the Duo matched the repair byte for byte, and the TOC
+reported version 1.0.1. The exact PR-source export passed the native-to-Lua
+round-trip suite. The user's in-game retest is still pending.

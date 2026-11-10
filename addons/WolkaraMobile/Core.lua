@@ -10,7 +10,7 @@ local pendingEdit, pendingDone
 function ns.Print(text) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffWolkara:|r " .. tostring(text)) end
 function ns.Guard(label, fn, ...)
     local ok, err = pcall(fn, ...)
-    if not ok then ns.Print(label .. ": " .. tostring(err)) end
+    if not ok then ns.errors=(ns.errors or 0)+1; ns.Print(label .. ": " .. tostring(err)) end
     return ok
 end
 function ns.Register(name, module) module.name=name; modules[#modules+1]=module; return module end

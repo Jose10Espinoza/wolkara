@@ -2,7 +2,7 @@
 ## Title: Wolkara Mobile
 ## Notes: Optional touch abilities, original game menus and window fitting.
 ## Author: Wolkara contributors; based on pookee/WolkaraRoue
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariablesPerCharacter: WolkaraMobileDB
 
 Config.lua
