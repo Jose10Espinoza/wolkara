@@ -635,3 +635,9 @@ addon in the installed list. A clean signed Release build and bundle checks pass
 These fixtures do not establish real-client combat/taint compatibility. In-game
 menu interaction, inventory use/equip/drag and spell execution still need the
 user's physical-device test; no guest gameplay was automated.
+
+Device installation: the signed app was installed over the same bundle after the
+closed-app guard, and normal launch succeeded. Bundled addon files matched the PR
+byte for byte. The device connection failed during the follow-up check, before
+companion-folder preparation could be verified. Reaching Ready on the Duo and
+in-game interaction remain pending user checks.
