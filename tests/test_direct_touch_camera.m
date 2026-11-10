@@ -1,6 +1,7 @@
 // Synthetic UIKit touches only; no game is loaded or controlled by this fixture.
 #import "AppKit.h"
 #import "TouchControls.h"
+#import "AKMobileInterface.h"
 #import "TouchGamepad.h"
 #import "TouchActionOverlay.h"
 #include <assert.h>
@@ -14,10 +15,12 @@ extern CGError CGWarpMouseCursorPosition(CGPoint point);
 @property CGPoint point;
 @property UITouchPhase testPhase;
 @property UITouchType testType;
+@property NSTimeInterval testTime;
 @property(nonatomic,weak) UIView *host;
 @end
 @implementation CameraTouch
 - (CGPoint)locationInView:(UIView *)view { return self.host ? [self.host convertPoint:self.point toView:view] : self.point; }
+- (NSTimeInterval)timestamp { return self.testTime; }
 - (UITouchPhase)phase { return self.testPhase; }
 - (UITouchType)type { return self.testType; }
 - (UIView *)view { return self.host; }
@@ -210,8 +213,63 @@ static void CheckCamera(CGSize size, CGPoint start, BOOL right) {
     Send(host,event,other,UITouchPhaseMoved,moved); CheckEvent(drag,moved,size,moved.x-start.x,moved.y-start.y);
     Send(host,event,other,UITouchPhaseEnded,moved); CheckEvent(up,moved,size,0,0); Empty();
 }
+static void Command(unsigned short code) {
+    NSEventModifierFlags flags=NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift;
+    NSEvent *down=Next(__LINE__), *up=Next(__LINE__), *restore=Next(__LINE__);
+    assert(down.type==NSEventTypeKeyDown && up.type==NSEventTypeKeyUp && down.keyCode==code && up.keyCode==code);
+    assert(down.modifierFlags==flags && up.modifierFlags==flags);
+    assert(restore.type==NSEventTypeFlagsChanged && !restore.modifierFlags);
+}
+static void CheckMobile(void) {
+    CGSize size=CGSizeMake(951,669);
+    NSWindow *window=[[NSWindow alloc] initWithContentRect:(CGRect){CGPointZero,size} styleMask:0 backing:0 defer:NO];
+    UIView *host=[[NSClassFromString(@"AKHostView") alloc] initWithFrame:(CGRect){CGPointZero,size}];
+    [host setValue:window forKey:@"nsWindow"]; [host layoutSubviews]; Empty();
+    AKTouchControls *controls=[host valueForKey:@"_touchControls"]; controls.trackpadEnabled=NO;
+    CameraTouch *finger=[CameraTouch new]; finger.host=host;
+    CameraEvent *event=[CameraEvent new]; event.touches=[NSSet setWithObject:finger];
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:AKMobileAvailableKey];
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:AKMobileEnabledKey];
+    AKMouseSetCaptured(false); CGPoint origin=CGPointMake(90,180), target=CGPointMake(120,190), anchor=CGPointMake(500,300);
+    Warp(anchor); Empty();
+    // Both tap and hold are labelled BEFORE the click and cleared after its up.
+    for (unsigned hold=0;hold<2;hold++) {
+        finger.testTime=1; Send(host,event,finger,UITouchPhaseBegan,origin); Empty();
+        finger.testTime=hold?1.6:1.1; Send(host,event,finger,UITouchPhaseEnded,origin);
+        Command(hold?109:101);
+        CheckEvent(NSEventTypeMouseMoved,origin,size,0,0);
+        CheckEvent(NSEventTypeLeftMouseDown,origin,size,0,0); CheckEvent(NSEventTypeLeftMouseUp,origin,size,0,0);
+        Command(103); Empty();
+    }
+    // A quick swipe retains the camera anchor. Hold-drag starts at the item itself.
+    for (unsigned hold=0;hold<2;hold++) {
+        Warp(anchor); finger.testTime=2; Send(host,event,finger,UITouchPhaseBegan,origin);
+        finger.testTime=hold?2.6:2.1; Send(host,event,finger,UITouchPhaseMoved,target); Command(111);
+        CGPoint down=hold?origin:anchor, moved=hold?target:CGPointMake(anchor.x+30,anchor.y+10);
+        if (hold) CheckEvent(NSEventTypeMouseMoved,origin,size,0,0);
+        CheckEvent(NSEventTypeLeftMouseDown,down,size,0,0);
+        CheckEvent(NSEventTypeLeftMouseDragged,moved,size,30,10);
+        Send(host,event,finger,UITouchPhaseEnded,target); CheckEvent(NSEventTypeLeftMouseUp,moved,size,0,0); Command(103); Empty();
+    }
+    // Edit mode permits immediate absolute placement, without delaying every drag.
+    [(id<AKMobileInterfaceHost>)host ak_mobileCommand:AKMobileEdit]; Command(98);
+    finger.testTime=3; Send(host,event,finger,UITouchPhaseBegan,origin);
+    finger.testTime=3.1; Send(host,event,finger,UITouchPhaseMoved,target); Command(111);
+    CheckEvent(NSEventTypeMouseMoved,origin,size,0,0); CheckEvent(NSEventTypeLeftMouseDown,origin,size,0,0);
+    CheckEvent(NSEventTypeLeftMouseDragged,target,size,30,10);
+    Send(host,event,finger,UITouchPhaseCancelled,target); Command(111);
+    CheckEvent(NSEventTypeLeftMouseUp,target,size,0,0); Command(103); Empty();
+    [(id<AKMobileInterfaceHost>)host ak_mobileCommand:AKMobileDone]; Command(100);
+    // A physical pointer gets neither touch tags nor right-click conversion.
+    finger.testType=UITouchTypeIndirectPointer;
+    Send(host,event,finger,UITouchPhaseBegan,origin); CheckEvent(NSEventTypeLeftMouseDown,origin,size,0,0);
+    Send(host,event,finger,UITouchPhaseEnded,origin); CheckEvent(NSEventTypeLeftMouseUp,origin,size,0,0); Empty();
+    [NSUserDefaults.standardUserDefaults setBool:NO forKey:AKMobileEnabledKey];
+    [NSUserDefaults.standardUserDefaults setBool:NO forKey:AKMobileAvailableKey];
+}
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
+    [NSUserDefaults.standardUserDefaults setBool:NO forKey:AKMobileEnabledKey];
     const CGSize sizes[]={{852,393},{932,430},{951,669},{1194,834}};
     for (unsigned i=0;i<sizeof sizes/sizeof *sizes;i++) {
         CGSize size=sizes[i];
@@ -220,5 +278,6 @@ int main(void) { @autoreleasepool {
             CheckCamera(size,starts[j],j==2);
         }
     }
+    CheckMobile();
     puts("DIRECT_TOUCH_CAMERA_PASS");
 } return 0; }

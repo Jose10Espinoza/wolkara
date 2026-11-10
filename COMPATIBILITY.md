@@ -602,3 +602,36 @@ Questie, Improved Forever or their settings. Read back all 65 QuestieDB files
 and the package manifest from the Duo: byte-for-byte verification passed, and
 the existing package records were unchanged. Opened the launcher. Questie
 initialization in the game remains a user check.
+
+## Optional mobile interface (2026-11-10)
+
+WolkaraMobile adapts pookee/WolkaraRoue's MIT action selection/feedback and original
+window fitting at 1843b131216352b883a14c5b7ca76b022dc9b69c. The shipped companion
+addon is off by default and limited to Forever. It adds up to 64 individually
+positioned/sized actions, a whole-layout editor and a menu using original game
+dialog/button templates. It does not change unit frames, chat, global UI scale,
+the controller layout or frame-rate policy. Disabling restores original window
+scale, clamp insets and anchors; saved character layouts remain. Explicit Done
+& save reloads the UI. Protected edits and toggle requests defer through combat.
+
+Direct finger taps are tagged through temporary CTRL-ALT-SHIFT-F5–F12 addon
+bindings. Secure container-button wrappers reinterpret only tagged taps as right
+clicks. Hold/release opens item options; hold at least 0.45 s then drag permits
+absolute item movement. Quick swipes retain the existing camera path. Drag/hold
+releases cannot cast a companion ability or use a bag item. A gesture is consumed
+on mouse-up and cleared again by the host; physical mouse and trackpad behavior
+is unchanged. The separate controller-shortcut circles are temporarily inactive
+while editing addon abilities, then resume with their saved settings.
+
+Validation: standalone installer and Lua API-fixture regressions pass, covering
+other-addon/SavedVariables isolation, invalid source and symlink rejection,
+interrupted replacement recovery, on/off restoration, item gesture routing, spell
+assignment, resize/movement, combat queues, explicit saving and layout limits.
+Direct-touch simulator regressions pass for multiple iPhone/iPad viewport sizes,
+including no camera teleport, tagged tap/hold/drag, absolute edit placement,
+cancellation, modifier restoration and untouched physical-pointer events. The
+controller/Settings fixture and launcher fixture pass, including the bundled
+addon in the installed list. A clean signed Release build and bundle checks pass.
+These fixtures do not establish real-client combat/taint compatibility. In-game
+menu interaction, inventory use/equip/drag and spell execution still need the
+user's physical-device test; no guest gameplay was automated.

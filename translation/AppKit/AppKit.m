@@ -6,6 +6,7 @@
 #import "TouchGamepad.h"
 #import "TouchGamepadLayout.h"
 #import "AKPerformanceOverlay.h"
+#import "AKMobileInterface.h"
 #import "MemoryDiagnostics.h"
 #import <GameController/GameController.h>
 #import <objc/message.h>
@@ -245,7 +246,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     return AKHeldFlags(held);
 }
 
-@interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate, AKTouchDragHost>
+@interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate, AKTouchDragHost, AKMobileInterfaceHost>
 @property (nonatomic, weak) NSWindow *nsWindow;
 @end
 
@@ -263,6 +264,8 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     BOOL _directPressed, _directRelative;
     BOOL _directDragging, _directCancelled, _directTrackpad;
     NSInteger _directButton;
+    BOOL _mobileEditing, _directMobile, _directAbsolute, _directMarked;
+    NSTimeInterval _directBeganAt;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -400,6 +403,29 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         if (privateInput) AKMarkPrivateInputEvent(event);
         [NSApp postEvent:event atStart:NO];
     }
+}
+- (void)ak_mobileCommand:(AKMobileCommand)command {
+    if (command > AKMobileDrag) return;
+    if (command == AKMobileEdit) _mobileEditing = YES;
+    if (command == AKMobileDone || command == AKMobileDisable) _mobileEditing = NO;
+    static const unsigned short codes[] = {96,97,98,100,101,109,103,111};
+    unichar character = 0xF708 + command; // NSF5FunctionKey…NSF12FunctionKey
+    NSString *characters = [NSString stringWithCharacters:&character length:1];
+    NSEventModifierFlags modifiers = NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift;
+    [self postTextKey:codes[command] characters:characters unmodified:characters modifiers:modifiers];
+    // Restore the current hardware state, including held modifiers, after the chord.
+    NSEvent *restore = [NSEvent new]; restore.type = NSEventTypeFlagsChanged;
+    restore.window = self.nsWindow; restore.modifierFlags = _mods;
+    restore.timestamp = NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:restore atStart:NO];
+}
+- (void)markMobileGesture:(AKMobileCommand)command {
+    if (!_directMobile) return;
+    [self ak_mobileCommand:command]; _directMarked = YES;
+}
+- (void)clearMobileGesture {
+    if (_directMarked) [self ak_mobileCommand:AKMobileClear];
+    _directMarked = NO;
 }
 - (void)touchSubmitPrivateText:(NSString *)text {
     AKEnumerateTextKeys(text, ^(NSString *characters, NSString *unmodified, unsigned short code, NSUInteger modifiers) {
@@ -577,6 +603,7 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
     _directCancelled = YES;
     if (!_directPressed) return;
     _directPressed = NO;
+    [self markMobileGesture:AKMobileDrag];
     [self postMouse:_directButton ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp
                  at:_last button:_directButton clicks:1 delta:CGPointZero];
     // Keep the cancelled finger until it lifts, so a mode change cannot turn
@@ -586,6 +613,10 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
     _directDragging = YES; _directRelative = YES;
     if (_directTrackpad) return;
     _directPressed = YES;
+    [self markMobileGesture:AKMobileDrag];
+    if (_directAbsolute) {
+        [self postMouse:NSEventTypeMouseMoved at:_directOrigin button:0 clicks:0 delta:CGPointZero];
+    }
     // Start at the existing guest cursor, not at the new finger's position.
     // Clients may poll absolute position before they request mouse capture.
     [self postMouse:_directButton ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown
@@ -596,6 +627,7 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
     [_touchControls cancelTouches];
     _directTouch = touch; _directOrigin = _directFingerLast = origin;
     _directCancelled = NO; _directTrackpad = _touchControls.trackpadEnabled; _directButton = 0;
+    _directMobile = AKMobileInterfaceEnabled(); _directAbsolute = NO;
     [self startDirectDrag]; return YES;
 }
 - (void)ak_moveTouchDrag:(UITouch *)touch {
@@ -603,6 +635,9 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
     CGPoint point = [touch locationInView:self];
     if (!_directDragging) {
         if (hypot(point.x-_directOrigin.x, point.y-_directOrigin.y) < AKTouchDragThreshold) return;
+        // Hold-then-drag manipulates original UI; a normal swipe retains the
+        // established relative camera path. Editing always permits direct placement.
+        _directAbsolute = _directMobile && (_mobileEditing || touch.timestamp - _directBeganAt >= 0.45) && !AKMouseIsCaptured();
         [self startDirectDrag];
     }
     CGPoint delta = CGPointMake(point.x-_directFingerLast.x, point.y-_directFingerLast.y);
@@ -614,8 +649,8 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
         // than deltaX/Y. Freezing that position can leave subsequent swipes inert.
         // Accumulate from the existing cursor, never the finger's new origin;
         // once captured, preserve the requested anchor and send raw deltas.
-        CGPoint cursor = _last;
-        if (!AKMouseIsCaptured()) {
+        CGPoint cursor = _directAbsolute ? point : _last;
+        if (!_directAbsolute && !AKMouseIsCaptured()) {
             cursor.x = MAX(0, MIN(self.bounds.size.width, cursor.x + delta.x));
             cursor.y = MAX(0, MIN(self.bounds.size.height, cursor.y + delta.y));
         }
@@ -628,7 +663,8 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
     if (cancelled) [self touchInputCancelled];
     if (_directPressed) [self postMouse:_directButton ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp
                                    at:_last button:_directButton clicks:1 delta:CGPointZero];
-    _directTouch = nil; _directPressed = NO; _directDragging = NO;
+    [self clearMobileGesture];
+    _directTouch = nil; _directPressed = NO; _directDragging = NO; _directMobile = NO; _directAbsolute = NO;
 }
 - (BOOL)handleTrackpadTouches:(NSSet<UITouch *> *)touches event:(UIEvent *)event {
     if (!_touchControls.trackpadEnabled) return NO;
@@ -651,6 +687,8 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
         _directOrigin = _directFingerLast = [finger locationInView:self];
         _directDragging = NO; _directCancelled = NO; _directTrackpad = NO;
         _directRelative = AKMouseIsCaptured();
+        _directMobile = AKMobileInterfaceEnabled(); _directAbsolute = NO;
+        _directBeganAt = finger.timestamp;
         [self reconcileModifiers:AKMods(ev.modifierFlags)];
         // Wait for intent: a tap targets this position on lift; a drag never
         // teleports the cursor, even before the game's capture notification.
@@ -678,6 +716,7 @@ static UITouch *AKDirectTouch(NSSet<UITouch *> *touches) {
         CGPoint point = [_directTouch locationInView:self];
         if (!_directDragging && !_directCancelled && hypot(point.x-_directOrigin.x, point.y-_directOrigin.y) < AKTouchDragThreshold) {
             if (_directRelative || AKMouseIsCaptured()) point = _last;
+            [self markMobileGesture:(_directTouch.timestamp - _directBeganAt >= 0.45 && !_mobileEditing) ? AKMobileHold : AKMobileTap];
             [self postMouse:NSEventTypeMouseMoved at:point button:0 clicks:0 delta:CGPointZero];
             [self postMouse:_directButton ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown
                          at:point button:_directButton clicks:1 delta:CGPointZero];
