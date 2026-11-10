@@ -21,7 +21,7 @@ tools/generate.sh
 # Its one way to run code, chosen already.
 # By target: schemes need a destination the SDK alone lacks.
 xcodebuild -project Tolkara.xcodeproj -target TolkaraDiagnostics -configuration Release \
-    -sdk iphoneos -arch arm64 SYMROOT=build/unsigned NATIVE_GUEST_SHIMS=GENERIC TOLKARA_MODE=external-jit \
+    -sdk iphoneos -arch arm64 SYMROOT="$PWD/build/unsigned" NATIVE_GUEST_SHIMS=GENERIC TOLKARA_MODE=external-jit \
     TOLKARA_SYSTEM_ROOTS="${TOLKARA_SYSTEM_ROOTS:-YES}" \
     INFOPLIST_KEY_CFBundleDisplayName=Wolkara \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
