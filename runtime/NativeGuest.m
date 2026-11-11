@@ -1867,6 +1867,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     GuestBinder binder={.image=&guest.image,.path=guest.path,.host=guest.libraries};
     if (!gf_apply(&guest.image,guest.slide,resolve,&binder,&stats,error,sizeof error)) { LOG("[native] fixups failed: %s\n",error); goto done; }
     LOG("[native] resolved rebases=%zu binds=%zu\n",stats.rebases,stats.binds);
+    gi_report(&guest.image, log);
     LOG("[native] stubs=%u of %u\n",gs_used(),gs_capacity());
     if (!setup_tls(&guest.image,guest.slide,"the application")) goto done;
     // Carried libraries get the treatment dyld gives them.
