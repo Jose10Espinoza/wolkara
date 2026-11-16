@@ -812,7 +812,65 @@ sample remain pending; no extra-memory gain is claimed yet.
   pass; the shipped Metal adapter exports the lifecycle hint used by the
   runtime. No third-party executable, input or memory was inspected or changed.
 - Installed over the existing Duo app after a fresh closed-app check and
-  launched successfully, without uninstalling the app. A live Duo
-  side-by-side/full-screen transition with the fix still needs user validation.
+  launched successfully, without uninstalling the app. The user subsequently
+  confirmed that the live side-by-side/full-screen check works on the Duo.
   The device build retains the pre-existing local diagnostic/audio edits;
   those unchanged edits are excluded from this fix.
+
+## iPhone Duo connection diagnosis (2026-11-07)
+
+- The user reports delayed world interactions while chat continues, with camera
+  rendering still responsive. They explicitly corrected an earlier automatic
+  answer claiming image freezes. The Mac works on the same Wi-Fi, and disabling
+  the performance HUD does not resolve the Duo symptom.
+- An opt-in `--network-health` build was installed in place over Wi-Fi after the
+  user closed the app and the exact-bundle guard confirmed it. The normal
+  launcher was started with that flag; the user started and played the game.
+  The original TCP fixture passed with ASan/UBSan and in the iOS simulator;
+  signed Release and app-bundle checks passed. These validate instrumentation,
+  not a fix for the reported connection failure.
+- During the reported session, anonymous TCP connection 14 received no new
+  counted bytes from t=262 through t=712 seconds (226 samples). Its unread queue
+  was zero throughout, receive windows stayed open, outgoing bytes increased by
+  19,557, and retransmitted packets increased by 11. Another connection received
+  4,720 bytes during that interval. The sampler does not identify chat/world
+  connections and does not inspect endpoints or payloads.
+- Connection 14 then received 510,946 bytes by t=716. Its briefly enlarged unread
+  queue had drained by t=718.1. No further receive-counter plateau of at least
+  20 seconds was seen through t=900, when the diagnostic stopped automatically.
+  This does not establish whether the user's visible symptom fully recovered.
+- This capture provides no evidence of a persistent unread socket backlog during
+  the long gap. It does not distinguish the server, network path or client
+  session as the cause, nor exclude a Wolkara regression. The compared saved
+  network options had no explicit values in either device's Config.wtf; runtime
+  option equivalence was not established. No network-setting workaround or
+  confirmed fix has been applied. Private captures remain in ignored logs.
+
+## iPhone Duo audio and toolbar follow-up (2026-11-05)
+
+The user could play Forever on the iPhone Duo but heard no audio through
+headphones. The device log showed RemoteIO creation succeeding, followed by
+desktop CurrentDevice property 2000 failing with `-10879`, before stream
+initialization. The compatibility handling for device selection and stream
+sample rate had incorrectly depended on `--trace-audio-render`. It now runs in
+ordinary launches; render-buffer observation remains opt-in. The new simulator
+test reproduced that exact failure before the fix and passes device selection,
+invalid-device rejection and stream initialization after it.
+
+The user also reported toolbar buttons losing their spacing in side-by-side
+windows. Customized toolbar positions now use fixed point offsets. Top and
+bottom groups retain their spacing and distance from their respective edge;
+the groups translate together horizontally when necessary to stay visible.
+If an arrangement cannot fit, the default toolbar is shown temporarily without
+overwriting it. Existing normalized positions migrate on first use, so the
+first game launch should use the window size in which they were configured.
+The former format did not retain that reference size.
+
+The toolbar UI fixture reproduced the spacing failure before the fix and now
+passes drag, persistence, resize and round-trip checks, including Duo-sized
+windows. Model tests cover top/bottom groups, safe-area changes, relaunch,
+legacy migration, compact fallback and reset. The translation simulator suite
+and signed Release build pass. The update was installed over the existing app,
+preserving its data. The user then confirmed both audible output through
+headphones and correct button spacing after switching to side-by-side on the
+physical Duo.

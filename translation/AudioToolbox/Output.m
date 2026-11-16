@@ -92,7 +92,9 @@ OSStatus AudioUnitSetProperty(AudioUnit unit,AudioUnitPropertyID property,AudioU
     OSStatus s;
     // Desktop HAL chooses a device explicitly. RemoteIO uses the session's
     // route. Accept only that actual default device, never an arbitrary ID.
-    if(property==2000 && scope==kAudioUnitScope_Global && element==0 && remoteOutput(unit) && renderProbeEnabled()) {
+    // Device compatibility is required in ordinary launches too; only render
+    // buffer observation below is controlled by --trace-audio-render.
+    if(property==2000 && scope==kAudioUnitScope_Global && element==0 && remoteOutput(unit)) {
         UInt32 requested=0,current=0;
         if(!data || size!=sizeof requested)s=kAudioUnitErr_InvalidPropertyValue;
         else { memcpy(&requested,data,sizeof requested);s=defaultOutput(&current);if(!s && requested!=current)s=kAudioUnitErr_InvalidPropertyValue; }
@@ -117,12 +119,12 @@ OSStatus AudioUnitSetProperty(AudioUnit unit,AudioUnitPropertyID property,AudioU
 OSStatus AudioUnitGetProperty(AudioUnit unit,AudioUnitPropertyID property,AudioUnitScope scope,AudioUnitElement element,void *data,UInt32 *size) {
     OSStatus (*f)(AudioUnit,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,void *,UInt32 *)=native(__func__);
     OSStatus s;
-    if(property==2000 && scope==kAudioUnitScope_Global && element==0 && remoteOutput(unit) && renderProbeEnabled()) {
+    if(property==2000 && scope==kAudioUnitScope_Global && element==0 && remoteOutput(unit)) {
         UInt32 current=0;
         if(!data || !size || *size<sizeof current)s=kAudioUnitErr_InvalidPropertyValue;
         else { s=defaultOutput(&current);if(!s) { memcpy(data,&current,sizeof current);*size=sizeof current; } }
     } else s=f?f(unit,property,scope,element,data,size):-4;
-    if(!s && property==kAudioUnitProperty_StreamFormat && data && size && *size==sizeof(AudioStreamBasicDescription) && remoteOutput(unit) && renderProbeEnabled()) {
+    if(!s && property==kAudioUnitProperty_StreamFormat && data && size && *size==sizeof(AudioStreamBasicDescription) && remoteOutput(unit)) {
         AudioStreamBasicDescription format;memcpy(&format,data,sizeof format);
         // RemoteIO exposes an unspecified rate before initialization. A desktop
         // HAL client expects the selected hardware device's concrete format.

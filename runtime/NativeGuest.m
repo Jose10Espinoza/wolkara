@@ -21,6 +21,7 @@ static NativeCodeMemory local_quarantine;
 #include "HostExecutionProbe.h"
 #include "GuestWait.h"
 #include "GuestWaitTrace.h"
+#include "NetworkHealth.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
 #include <mach-o/loader.h>
@@ -705,6 +706,7 @@ static void guest_abort(void) __attribute__((noreturn));
 // directories it creates and the environment variables it reads. Off by
 // default, and then the guest binds straight to libc for these.
 static bool trace_guest;
+static bool network_health;
 static int guest_open(const char *, int, ...);
 static int guest_openat(int, const char *, int, ...);
 static int guest_stat(const char *, struct stat *);
@@ -806,6 +808,7 @@ static void *hook(const char *name) {
     HOOK("sigaction",guest_sigaction);
     HOOK("__ulock_wait",guest_ulock_wait);
     HOOK("nanosleep",gw_nanosleep); HOOK("usleep",gw_usleep); HOOK("sleep",gw_sleep);
+    if (network_health) { HOOK("socket",nh_socket); HOOK("close",nh_close); }
     HOOK("CFBundleGetMainBundle",guest_cf_main_bundle);
     HOOK("_NSGetExecutablePath",guest_executable_path);
     HOOK("_tlv_bootstrap",guest_tlv_bootstrap);
@@ -1787,6 +1790,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if(set_nibs) set_nibs([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/GuestCompatibility/Nibs"].fileSystemRepresentation);
     }
     trace_guest=[NSProcessInfo.processInfo.arguments containsObject:@"--trace-guest"];
+    network_health=[NSProcessInfo.processInfo.arguments containsObject:@"--network-health"];
+    if (network_health) nh_start(log,900);
     if (trace_guest) LOG("[native] tracing failed file access, created directories, getenv, sockets and the calls dlsym hands out (--trace-guest)\n");
     if (trace_guest) {
         struct sigaction crash_registers={0};
@@ -2027,6 +2032,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
     }
 done:
+    if (network_health) nh_stop();
     LOG("[native] result %s=%s\n",full_startup?"startup_return":"first_initializer",ok?"PASS":"FAIL");
     // Retain live mappings and library handles: initializer-created pointers and
     // worker threads may outlive this call. Only one guest per app process.
