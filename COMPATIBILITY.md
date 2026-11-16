@@ -811,7 +811,8 @@ sample remain pending; no extra-memory gain is claimed yet.
   A clean generic Release developer-service build and app-bundle validation
   pass; the shipped Metal adapter exports the lifecycle hint used by the
   runtime. No third-party executable, input or memory was inspected or changed.
-- Device installation is pending closure of the running app. A live Duo
+- Installed over the existing Duo app after a fresh closed-app check and
+  launched successfully, without uninstalling the app. A live Duo
   side-by-side/full-screen transition with the fix still needs user validation.
   The device build retains the pre-existing local diagnostic/audio edits;
   those unchanged edits are excluded from this fix.
