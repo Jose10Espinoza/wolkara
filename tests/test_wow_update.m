@@ -119,8 +119,10 @@ int main(void){@autoreleasepool{
     client.responses[[archiveKey stringByAppendingString:@".index"]]=Index(raw);
     NSData *cdnData=Text([NSString stringWithFormat:@"archives = %@\n",archiveKey]);NSString *cdn=TKWoWMD5(cdnData);client.responses[cdn]=cdnData;
     client.responses[@"versions"]=Text([NSString stringWithFormat:@"Region|BuildConfig|CDNConfig|VersionsName\neu|%@|%@|synthetic-2\n",build,cdn]);
-    client.responses[@"cdns"]=Text(@"Name|Path|Servers\neu|tpr/wow|https://level3.ssl.blizzard.com\n");
+    client.responses[@"cdns"]=Text(@"Name|Path|Hosts|Servers\neu|tpr/wow|level3.blizzard.com level3.ssl.blizzard.com|http://level3.blizzard.com/?maxhosts=8 https://level3.ssl.blizzard.com/?maxhosts=4&fallback=1\n");
     NSError *error=nil;NSDictionary *plan=[client planForProduct:@"wowf" region:@"eu" locale:@"enUS" error:&error];assert(plan);
+    assert([plan[@"cdnHosts"] isEqual:@"level3.blizzard.com level3.ssl.blizzard.com"]);
+    assert([plan[@"cdnServers"] containsString:@"http://level3.blizzard.com/?maxhosts=8"]);
     NSString *base=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString],*root=[base stringByAppendingPathComponent:@"World of Warcraft"];
     NSFileManager *fm=NSFileManager.defaultManager;
     NSString *exe=[root stringByAppendingPathComponent:@"_forever_/Synthetic.app/Contents/MacOS/Synthetic"];
@@ -274,6 +276,9 @@ int main(void){@autoreleasepool{
     fresh.importantCapacity=@115000000000ULL;fresh.freeCapacity=@0;
     result=[fresh updatePlan:plan root:freshRoot progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
     if(!result)fprintf(stderr,"Fresh install: %s\n",error.localizedDescription.UTF8String);assert(result);
+    NSString *freshInfo=[NSString stringWithContentsOfFile:[freshRoot stringByAppendingPathComponent:@".build.info"] encoding:NSUTF8StringEncoding error:&error];
+    assert([freshInfo containsString:@"CDN Hosts!STRING:0|CDN Servers!STRING:0"]);
+    assert([freshInfo containsString:plan[@"cdnServers"]]);
     NSString *freshConfig=[NSString stringWithContentsOfFile:[freshRoot stringByAppendingPathComponent:@"_forever_/WTF/Config.wtf"] encoding:NSUTF8StringEncoding error:&error];
     assert([freshConfig containsString:@"SET portal \"EU\""] && [freshConfig containsString:@"SET textLocale \"enUS\""]);
     // Reject oversized local metadata before cloning or allocating its contents.

@@ -50,6 +50,23 @@ static NSString *const AKTouchTrackpadDefaultsKey = @"TKTouchTrackpadEnabled";
 // The composer's placeholder when nothing has been dictated or typed: it says what the field
 // does, so an empty box is not mistaken for the game's own text.
 static NSString *AKComposerDefaultLabel(void) { return AKHostLocalized(@"touch.draft.placeholder"); }
+static NSArray<NSString *> *AKChatChannels(void) { return @[@"say", @"group", @"bg", @"reply", @"general", @"trade"]; }
+static NSString *AKChatCommand(NSString *channel) {
+    return @{@"say":@"/say", @"group":@"/p", @"bg":@"/bg", @"reply":@"/reply", @"general":@"/1", @"trade":@"/2"}[channel];
+}
+static UIColor *AKChatColor(NSString *channel) {
+    // Standard WoW chat colors. Custom per-character chat colors stay in WoW;
+    // the host neither reads game memory nor needs a companion addon.
+    if ([channel isEqual:@"say"]) return UIColor.whiteColor;
+    if ([channel isEqual:@"group"]) return [UIColor colorWithRed:0.67 green:0.67 blue:1 alpha:1];
+    if ([channel isEqual:@"bg"]) return [UIColor colorWithRed:1 green:0.5 blue:0 alpha:1];
+    if ([channel isEqual:@"reply"]) return [UIColor colorWithRed:1 green:0.5 blue:1 alpha:1];
+    return [UIColor colorWithRed:1 green:0.75 blue:0.75 alpha:1];
+}
+static NSString *AKChatDraft(NSString *text) {
+    return [[[text componentsSeparatedByCharactersInSet:NSCharacterSet.controlCharacterSet]
+        componentsJoinedByString:@" "] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
 - (void)updateDraftButtons;
@@ -313,6 +330,7 @@ static NSString *AKComposerDefaultLabel(void) { return AKHostLocalized(@"touch.d
     BOOL _savedTextHeld, _savedTextEditing;
     BOOL _gamepadEnabled, _gamepadSimple, _gamepadHeld, _keyboardRequested;
     UIView *_accessory, *_composer;
+    UIStackView *_chatChannels;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
     AKTrackpad _pad;
@@ -558,13 +576,16 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     BOOL compact = safe.size.width < 408;
     CGFloat width = compact ? 252 : 408;
     CGFloat x = CGRectGetMidX(safe) - width / 2;
+    NSMutableDictionary<NSString *,NSValue *> *defaults = [NSMutableDictionary new];
     for (NSUInteger index = 0; index < items.count; index++) {
         UIView *item = items[index];
         CGRect fallback = CGRectMake(x + index * 52, safe.origin.y, index == 5 ? 96 : 44, 44);
         if (compact && index == 5) fallback = CGRectMake(CGRectGetMidX(safe)-48, safe.origin.y+52, 96, 44);
         if (index == 6) fallback = compact ? CGRectMake(CGRectGetMidX(safe)+56, safe.origin.y+52, 44, 44) : CGRectMake(x+364, safe.origin.y, 44, 44);
-        item.frame = layout ? [layout frameForItem:item.accessibilityIdentifier defaultFrame:fallback inBounds:safe] : fallback;
+        defaults[item.accessibilityIdentifier] = [NSValue valueWithCGRect:fallback];
     }
+    NSDictionary<NSString *,NSValue *> *frames = layout ? [layout framesForToolbar:defaults inBounds:safe] : defaults;
+    for (UIView *item in items) item.frame = frames[item.accessibilityIdentifier].CGRectValue;
     _dictateButton.frame = CGRectMake(26, 0, 44, 44);
     _dictationSendButton.frame = CGRectMake(0, 0, 44, 44);
     _dictationCancelButton.frame = CGRectMake(52, 0, 44, 44);
@@ -604,7 +625,9 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     CGRect frame = origin.CGRectValue;
     CGPoint delta = [pan translationInView:self];
     frame.origin.x += delta.x; frame.origin.y += delta.y;
-    [_gamepad.layout moveItem:key toFrame:frame inBounds:[self toolbarBounds]];
+    NSMutableDictionary<NSString *,NSValue *> *frames = [NSMutableDictionary new];
+    for (UIView *control in [self toolbarItems]) frames[control.accessibilityIdentifier] = [NSValue valueWithCGRect:control.frame];
+    [_gamepad.layout moveToolbarItem:key toFrame:frame currentFrames:frames inBounds:[self toolbarBounds]];
     [self setNeedsLayout]; [self layoutIfNeeded];
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
         [_gamepad.layout save];
@@ -678,7 +701,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     _dictationLanguageButton.hidden = !active;
     _dictationLanguageWidth.constant = active ? 140 : 0;
     _draftTextTop.constant = active ? 26 : 4;
-    _composerHeight.constant = active ? 104 : 82;
+    _composerHeight.constant = active ? 152 : 130;
     if (active && !wasActive) [_keyboardInput beginVoiceDraft];
     NSString *text = note.userInfo[@"text"];
     if (active && [text isKindOfClass:NSString.class]) {
@@ -907,6 +930,43 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     // rather than crashing.
     if ([self.delegate respondsToSelector:@selector(touchReplaceText:)]) [self.delegate touchReplaceText:text];
 }
+- (BOOL)touchSendChatText:(NSString *)text channel:(NSString *)channel {
+    NSString *command = AKChatCommand(channel);
+    NSString *message = AKChatDraft(text);
+    id<AKTouchControlsDelegate> target = self.delegate;
+    if (!command || !message.length || !self.window || UIApplication.sharedApplication.applicationState != UIApplicationStateActive ||
+        ![target respondsToSelector:@selector(touchReplaceText:)] ||
+        ![target respondsToSelector:@selector(touchSpecialKey:characters:)]) return NO;
+    // The command-chat shortcut opens a closed chat and only adds a slash to
+    // an already open one. Replacing the field then removes that slash and any
+    // old draft. Return would toggle an unknown field or publish old text.
+    // Queue one ordered transaction. Forever leaves its editor open after
+    // publishing (sometimes with a slash after typed input). Match the existing
+    // dictation confirmation: one Return, then one Escape to close that editor.
+    // A second Escape would open the game menu.
+    [target touchSpecialKey:44 characters:@"/"];
+    [target touchReplaceText:[NSString stringWithFormat:@"%@ %@",command,message]];
+    [target touchSpecialKey:36 characters:@"\r"];
+    [target touchSpecialKey:53 characters:@"\x1b"];
+    return YES;
+}
+- (void)sendChatChannel:(UIButton *)button {
+    if (_gamepad.configuring || ![_keyboardInput canModifyDraft] ||
+        !AKChatDraft(_keyboardInput.text).length || button.tag < 0 || (NSUInteger)button.tag >= AKChatChannels().count) return;
+    NSString *channel = AKChatChannels()[(NSUInteger)button.tag];
+    if (!self.window || ![self.delegate respondsToSelector:@selector(touchReplaceText:)]) return;
+    if (self.voiceDraftActive) {
+        // Freeze speech before UIKit commits a pending correction. The shell
+        // invalidates late recognition callbacks before submitting this copy.
+        [self prepareVoiceDraftForEditing];
+        NSString *text = [_keyboardInput reviewedDraftText];
+        if (text) [NSNotificationCenter.defaultCenter postNotificationName:@"AKTouchDictationAction" object:self
+            userInfo:@{@"action":@"channel", @"channel":channel, @"text":text}];
+    } else {
+        NSString *text = [[_keyboardInput reviewedDraftText] copy];
+        if (text && [self touchSendChatText:text channel:channel]) [self dismissKeyboard];
+    }
+}
 - (void)deleteBackward { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
 
 - (UIView *)inputAccessoryView {
@@ -956,6 +1016,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     BOOL ready = [_keyboardInput canModifyDraft];
     BOOL voice = self.voiceDraftActive;
     BOOL canSend = ready && _keyboardInput.text.length > 0;
+    for (UIButton *button in _chatChannels.arrangedSubviews) button.enabled = ready && AKChatDraft(_keyboardInput.text).length > 0;
     _dictationSendButton.enabled = voice && canSend;
     _insertDraftButton.enabled = voice ? canSend : [_keyboardInput canReplaceField];
     _clearDraftButton.enabled = voice || (ready && _keyboardInput.hasText);
@@ -1000,6 +1061,31 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         view.translatesAutoresizingMaskIntoConstraints = NO;
         [_composer addSubview:view];
     }
+    UIScrollView *channels = [UIScrollView new];
+    channels.translatesAutoresizingMaskIntoConstraints = NO;
+    channels.showsHorizontalScrollIndicator = YES;
+    [_composer addSubview:channels];
+    _chatChannels = [UIStackView new];
+    _chatChannels.translatesAutoresizingMaskIntoConstraints = NO;
+    _chatChannels.spacing = 8;
+    [channels addSubview:_chatChannels];
+    for (NSString *channel in AKChatChannels()) {
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.tag = (NSInteger)[AKChatChannels() indexOfObject:channel];
+        button.accessibilityIdentifier = [@"wolkara.chat." stringByAppendingString:channel];
+        [button setTitle:AKHostLocalized([@"touch.chat." stringByAppendingString:channel]) forState:UIControlStateNormal];
+        UIColor *color = AKChatColor(channel);
+        [button setTitleColor:color forState:UIControlStateNormal];
+        [button setTitleColor:[color colorWithAlphaComponent:0.65] forState:UIControlStateHighlighted];
+        [button setTitleColor:[color colorWithAlphaComponent:0.4] forState:UIControlStateDisabled];
+        button.accessibilityHint = [NSString stringWithFormat:AKHostLocalized(@"touch.chat.send.hint"), AKChatCommand(channel)];
+        button.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        button.contentEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 12);
+        button.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1];
+        button.layer.cornerRadius = 8;
+        [button addTarget:self action:@selector(sendChatChannel:) forControlEvents:UIControlEventTouchUpInside];
+        [_chatChannels addArrangedSubview:button];
+    }
     [NSLayoutConstraint activateConstraints:@[
         [label.leadingAnchor constraintEqualToAnchor:_composer.leadingAnchor constant:12],
         [label.topAnchor constraintEqualToAnchor:_composer.topAnchor constant:6],
@@ -1010,7 +1096,16 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [_dictationLanguageButton.heightAnchor constraintEqualToConstant:44],
         (_dictationLanguageWidth = [_dictationLanguageButton.widthAnchor constraintEqualToConstant:0]),
         [_keyboardInput.leadingAnchor constraintEqualToAnchor:_composer.leadingAnchor constant:8],
-        (_draftTextTop = [_keyboardInput.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:4]),
+        (_draftTextTop = [channels.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:4]),
+        [channels.leadingAnchor constraintEqualToAnchor:_composer.leadingAnchor constant:8],
+        [channels.trailingAnchor constraintEqualToAnchor:_composer.trailingAnchor constant:-8],
+        [channels.heightAnchor constraintEqualToConstant:44],
+        [_chatChannels.leadingAnchor constraintEqualToAnchor:channels.contentLayoutGuide.leadingAnchor],
+        [_chatChannels.trailingAnchor constraintEqualToAnchor:channels.contentLayoutGuide.trailingAnchor],
+        [_chatChannels.topAnchor constraintEqualToAnchor:channels.contentLayoutGuide.topAnchor],
+        [_chatChannels.bottomAnchor constraintEqualToAnchor:channels.contentLayoutGuide.bottomAnchor],
+        [_chatChannels.heightAnchor constraintEqualToAnchor:channels.frameLayoutGuide.heightAnchor],
+        [_keyboardInput.topAnchor constraintEqualToAnchor:channels.bottomAnchor constant:4],
         [_keyboardInput.bottomAnchor constraintEqualToAnchor:_composer.bottomAnchor constant:-8],
         [_keyboardInput.trailingAnchor constraintEqualToAnchor:clear.leadingAnchor],
         [clear.widthAnchor constraintEqualToConstant:44],
@@ -1037,7 +1132,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [_composer.bottomAnchor constraintEqualToAnchor:host.keyboardLayoutGuide.topAnchor constant:-4],
         [_composer.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
         width, [_composer.widthAnchor constraintLessThanOrEqualToConstant:800],
-        (_composerHeight = [_composer.heightAnchor constraintEqualToConstant:82]),
+        (_composerHeight = [_composer.heightAnchor constraintEqualToConstant:130]),
     ]];
 
     // Placement happens in layoutSubviews, by frame, from the host's own bounds - see

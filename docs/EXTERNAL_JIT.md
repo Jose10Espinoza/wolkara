@@ -68,6 +68,31 @@ Never enable JIT for a process that has already entered the game.
 
 ## Validation and remaining gates
 
+### Experimental IPA packaging
+
+With Xcode and XcodeGen available, build just the launcher/runtime with:
+
+```sh
+bash tools/package_external_jit_ipa.sh build/Wolkara-StikDebug-unsigned.ipa
+```
+
+The script builds the generic Release `WolkaraExternalJIT` target, excludes
+exported system roots, provisioning profiles and the integrated tunnel extension,
+and verifies an ad-hoc signature requesting `get-task-allow`. The output still
+needs device-valid development signing that preserves this entitlement; it is
+not directly installable as distributed. Configure StikDebug and LocalDevVPN
+separately. No game files are packaged.
+
+This script and the initialization of enabler-provided memory come from
+[CaptainXannath's #21](https://github.com/fJavierLasso/wolkara/pull/21).
+The runtime clears the image span before placement, including zero-fill pages,
+while preserving any reserved tail outside that span. Sanitizer tests and a
+Release package build pass on 2026-11-16. These checks do not establish that the
+first-initializer crash in [#22](https://github.com/fJavierLasso/wolkara/issues/22)
+is resolved, or replace the device and free-account validation below.
+
+### Earlier device validation
+
 2026-10-07: sanitizer request/protocol-failure tests and the complete
 `tools/test_emulation.sh` suite pass. The Debug arm64 device build succeeds.
 The installed app's signed entitlements were checked: development permission

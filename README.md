@@ -22,6 +22,10 @@ The addon store incorporates WolkaraForever's
 adapted to Wolkara's edition selection and shared update lock, with interrupted-update
 recovery fixes. Wolkara's website download flow replaces the API browser and credential setup.
 The imported MIT [license](WolkaraForever-LICENSE) is retained and shipped in the app.
+The startup metadata repair is adapted from John Klockenkemper's
+[WolkaraForever #24](https://github.com/jklock/wolkaraforever/pull/24).
+[CaptainXannath's #21](https://github.com/fJavierLasso/wolkara/pull/21) adds
+zero-initialization of externally prepared memory and experimental External JIT packaging.
 
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 
@@ -57,6 +61,11 @@ WoW gameplay under this capability set remain untested.
   game data. Updates preserve settings and addons.
 - Apple's keyboard with iOS autocorrection and dismissal after Send, plus a
   touch trackpad with two-finger scrolling.
+- Both typed and dictated drafts have chat-colored destination buttons: Say,
+  Group (`/p`), BG, Reply whisper, General (`/1`) and Trade (`/2`). Tap one to
+  open command chat, replace its text with the reviewed message and send once.
+  General/Trade use the character's channel numbers; colors use WoW's defaults.
+  The normal Replace/Send actions remain available for non-chat fields.
 - Direct camera dragging with mouse mode off keeps the cursor anchored when a
   finger lifts and restarts elsewhere; taps click their screen position on lift.
 - A microphone button opens chat and transcribes speech into a visible local draft.
@@ -69,7 +78,10 @@ WoW gameplay under this capability set remain untested.
 - Physical controller support and an on-screen controller when none is connected.
   Tap the controller toolbar button to switch Full/Simple; hold to turn it on/off.
   Simple keeps the left stick, LB/RB and menu, hiding both button rings, the right stick
-  and LT/RT. LB/RB positions are saved separately for Simple and Full.
+  and LT/RT. Full and Simple each remember their control/toolbar positions,
+  sizes, opacity, shoulder order, haptics and complete touch-ability layout.
+  Existing settings seed both profiles; subsequent edits and resets affect only
+  the selected mode, identified in Settings. The performance HUD remains global.
   Touch ability circles remain available. Double-tap the left stick for L3 or the
   right stick for R3. With the touch controller active, double-tapping bare game
   content in the lower-right quadrant also sends R3, including in Simple mode.
@@ -85,6 +97,9 @@ WoW gameplay under this capability set remain untested.
   or collapse; drag to reposition. Monitoring stops when hidden or backgrounded;
   it does not raise the rendering limit. GPU timing covers the presenting command
   buffer, not all GPU work in the system.
+- Declares support for Apple's Game Mode so the system can enable it during
+  full-screen play. The integrated build retains its increased-memory-limit
+  entitlement; Game Mode does not promise a fixed amount of extra memory.
 - **Add-ons** on the launcher: open **Browse CurseForge**, find the addon on the
   real website and choose its ZIP download. Wolkara receives the browser download,
   validates the archive and installs it automatically. No API key is needed.
@@ -100,9 +115,10 @@ WoW gameplay under this capability set remain untested.
 - Settings → Game tools also provides the addon manager, WTF + Interface backups,
   gamepad settings and graphics reset. Tools follow the selected edition.
 - Release builds and optimized adapters, shader cache hits without a full byte copy,
-  optional expensive diagnostics and a 5 FPS background rendering limit. Foreground
-  rendering keeps the standard iOS frame-rate behavior; no 120 Hz override or M1
-  graphics preset is applied.
+  optional expensive diagnostics and a pause of GPU submissions while inactive.
+  Pending rendering and texture uploads resume when the app becomes active;
+  foreground rendering keeps the standard iOS frame-rate behavior; no 120 Hz
+  override or M1 graphics preset is applied.
 
 ## Moving an existing installation
 

@@ -21,6 +21,7 @@ static NativeCodeMemory local_quarantine;
 #include "HostExecutionProbe.h"
 #include "GuestWait.h"
 #include "GuestWaitTrace.h"
+#include "NetworkHealth.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
 #include <mach-o/loader.h>
@@ -705,6 +706,7 @@ static void guest_abort(void) __attribute__((noreturn));
 // directories it creates and the environment variables it reads. Off by
 // default, and then the guest binds straight to libc for these.
 static bool trace_guest;
+static bool network_health;
 static int guest_open(const char *, int, ...);
 static int guest_openat(int, const char *, int, ...);
 static int guest_stat(const char *, struct stat *);
@@ -751,8 +753,14 @@ static bool guest_handle(const void *handle, size_t *index, bool *first) {
 static void *placed_symbol(size_t index, const char *name, bool first);
 extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
 static bool (*shader_wait_pending)(void);
-static bool shader_pending(void) { return shader_wait_pending && shader_wait_pending(); }
-static void pump_shader_wait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
+static bool (*metal_wait_pending)(void);
+static bool host_wait_pending(void) {
+    // A renderer worker can park at commit while UIKit is inactive. Its main
+    // thread job wait must deliver the foreground notification that releases it.
+    return (shader_wait_pending && shader_wait_pending()) ||
+           (metal_wait_pending && metal_wait_pending());
+}
+static void pump_host_wait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
 #define WAIT_TRACE_CALL(name,address,expression) \
     unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0; \
     GWWaitRecord previous=gwt_begin(tid,name,address); \
@@ -791,7 +799,7 @@ static int guest_ulock_wait(uint32_t operation,void *address,uint64_t value,uint
     pumping=true;
     unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0;
     GWWaitRecord previous=gwt_begin(tid,"__ulock_wait",address);
-    int result=gw_wait(__ulock_wait,operation,address,value,timeout,pthread_main_np()!=0,shader_pending,pump_shader_wait);
+    int result=gw_wait(__ulock_wait,operation,address,value,timeout,pthread_main_np()!=0,host_wait_pending,pump_host_wait);
     int code=errno;gwt_end(tid,previous);errno=code;
     pumping=false; return result;
 }
@@ -800,6 +808,7 @@ static void *hook(const char *name) {
     HOOK("sigaction",guest_sigaction);
     HOOK("__ulock_wait",guest_ulock_wait);
     HOOK("nanosleep",gw_nanosleep); HOOK("usleep",gw_usleep); HOOK("sleep",gw_sleep);
+    if (network_health) { HOOK("socket",nh_socket); HOOK("close",nh_close); }
     HOOK("CFBundleGetMainBundle",guest_cf_main_bundle);
     HOOK("_NSGetExecutablePath",guest_executable_path);
     HOOK("_tlv_bootstrap",guest_tlv_bootstrap);
@@ -1699,7 +1708,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         LOG("[native] the arena reserved earlier (%zu bytes) is not used; given back\n",reserved_arena.size);
         nc_destroy(&reserved_arena);
     }
-    bool take_reserved=reserved==NG_RESERVED_TAKE;
+    bool take_reserved=reserved==NG_RESERVED_TAKE, enabler_arena=false;
     startup_begin(signed_backend?"mapping the signed page container":"preparing execution memory",0);
     if (signed_backend)
         arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
@@ -1708,17 +1717,26 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
 #endif
     else if(take_reserved) {
-        guest.arena=reserved_arena; reserved_arena=(NativeCodeMemory){0}; arena_ready=true;
+        guest.arena=reserved_arena; reserved_arena=(NativeCodeMemory){0}; arena_ready=true; enabler_arena=true;
         LOG("[native] using the arena reserved earlier: %zu bytes\n",guest.arena.size);
     }
     else if(external) {
         // An enabler first; otherwise an arena of our own.
-        arena_ready=da_request_arena(&guest.arena,total,guest.log);
+        arena_ready=enabler_arena=da_request_arena(&guest.arena,total,guest.log);
         if(!arena_ready) arena_ready=nc_create_managed(&guest.arena,total,prepare_externally,NULL,&external_quarantine);
     }
     else
         arena_ready=nc_create(&guest.arena,total,publish,NULL);
     if (!arena_ready) { LOG("[native] arena preparation failed errno=%d %s; guest entry blocked\n",errno,signed_backend?error:""); goto done; }
+    if (enabler_arena) {
+        // StikDebug writes a marker into each prepared page. Pages with only
+        // zero-fill have no staged bytes below, so clear the image span first.
+        if (!nc_clear(&guest.arena,total)) {
+            LOG("[native] could not clear the enabler arena errno=%d; guest entry blocked\n",errno);
+            goto done;
+        }
+        LOG("[native] enabler arena cleared for %zu bytes\n",total);
+    }
     // A protection change can be reported and not granted.
     LOG("[native] arena protection %#x\n",hd_protection(guest.arena.executable));
     // Whichever route prepared it: nothing attached, really executable.
@@ -1781,6 +1799,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if(set_nibs) set_nibs([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/GuestCompatibility/Nibs"].fileSystemRepresentation);
     }
     trace_guest=[NSProcessInfo.processInfo.arguments containsObject:@"--trace-guest"];
+    network_health=[NSProcessInfo.processInfo.arguments containsObject:@"--network-health"];
+    if (network_health) nh_start(log,900);
     if (trace_guest) LOG("[native] tracing failed file access, created directories, getenv, sockets and the calls dlsym hands out (--trace-guest)\n");
     if (trace_guest) {
         struct sigaction crash_registers={0};
@@ -1855,6 +1875,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
+    metal_wait_pending=dlsym(RTLD_DEFAULT,"AKMetalMainThreadWaitPending");
     for (size_t i=0;i<carried.count;i++) {
         GuestLibrary *library=&carried.libraries[i];
         GFStats library_stats;
@@ -2021,6 +2042,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
     }
 done:
+    if (network_health) nh_stop();
     LOG("[native] result %s=%s\n",full_startup?"startup_return":"first_initializer",ok?"PASS":"FAIL");
     // Retain live mappings and library handles: initializer-created pointers and
     // worker threads may outlive this call. Only one guest per app process.

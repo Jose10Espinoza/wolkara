@@ -101,9 +101,15 @@ static void TestAddonBrowserPolicy(void) {
         fprintf(stderr,"WoW UIKit TIMEOUT\n"); _Exit(1);
     });
     fixture=[TKFixtureLibrary new];
+    // Start from an older launcher's ready installation. Its metadata must be
+    // repaired by the real controller/updater before Play, without a download.
+    fixture.omitCDNMetadata=YES; [fixture writeMetadata:0 duplicate:NO]; fixture.omitCDNMetadata=NO;
     NSString *retired=[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraTouch"];
     assert([NSFileManager.defaultManager createDirectoryAtPath:retired withIntermediateDirectories:YES attributes:nil error:NULL]);
     assert([@"synthetic addon" writeToFile:[retired stringByAppendingPathComponent:@"Fixture.lua"] atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+    NSString *mobile=[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraMobile"];
+    assert([NSFileManager.defaultManager createDirectoryAtPath:mobile withIntermediateDirectories:NO attributes:nil error:NULL]);
+    assert([@"WolkaraMobile bundled addon v1\n" writeToFile:[mobile stringByAppendingPathComponent:@".wolkara-owner"] atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
     [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WolkaraTouchHintShown"];
     self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.controller=[[TKWoWViewController alloc] initWithLibrary:(id)fixture];
@@ -126,8 +132,11 @@ static void TestAddonBrowserPolicy(void) {
     [self performSelector:@selector(checkReady) withObject:nil afterDelay:0.3];
 }
 - (void)checkReady {
+    assert(!TKWoWInspectInstallation((id)fixture,TKWoWProducts()[0],[fixture planForProduct:@"wowf" revision:0]).metadataNeedsRepair);
+    assert(atomic_load(&updates)==0); // Legacy CDN repair did not install/download.
     assert(!self.controller.presentedViewController);
     assert(![NSFileManager.defaultManager fileExistsAtPath:[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraTouch"]]);
+    assert(![NSFileManager.defaultManager fileExistsAtPath:[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraMobile"]]);
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
@@ -317,6 +326,7 @@ static void TestAddonBrowserPolicy(void) {
     UINavigationController *toolNavigation=[[UINavigationController alloc] initWithRootViewController:tools];
     [toolNavigation loadViewIfNeeded]; [tools loadViewIfNeeded];
     assert([tools.tableView numberOfRowsInSection:0]==5);
+    assert([tools.tableView numberOfSections]==1);
     [tools tableView:tools.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
     TKWoWAddonManagerViewController *addons=(id)toolNavigation.topViewController;
     assert([addons isKindOfClass:TKWoWAddonManagerViewController.class]);

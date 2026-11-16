@@ -58,6 +58,15 @@ or memory requirements; see [the distribution plan](WOLKARA_DISTRIBUTION.md).
   files does not remove or cache that separate runtime operation.
 
 Play checks `.build.info` and the selected executable on ordinary launches.
+Fresh installs retain both the advertised CDN hosts and the complete supported
+CDN server URLs, including their fallback parameters. A current installation
+missing either field is repaired automatically before Play: only `.build.info`
+changes, under the shared update lock, without redownloading game content.
+The repair preserves other products, existing tags and custom metadata, and
+refuses to write if another update has changed the installed build. This addresses
+the missing-CDN startup failure reported in
+[Wolkara #13](https://github.com/fJavierLasso/wolkara/issues/13).
+
 Updates compare required objects against a persistent verification inventory;
 unchanged verified CASC payload is not reread. Installing this launcher revision
 does not create that inventory retroactively: the first update of an imported

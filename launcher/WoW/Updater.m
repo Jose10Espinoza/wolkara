@@ -128,25 +128,53 @@ static BOOL ValidCapacity(NSNumber *capacity) {
     } @finally { if(failure && error)*error=failure; }
     return !failure;
 }
-- (BOOL)writeBuildInfo:(NSDictionary *)plan root:(NSString *)root error:(NSError **)error {
+- (BOOL)writeBuildInfo:(NSDictionary *)plan root:(NSString *)root repairOnly:(BOOL)repairOnly error:(NSError **)error {
     NSData *old=BuildInfo(root,error);if(!old)return NO;
     NSArray *rows=old.length?TKWoWTable(old,error):@[];if(!rows)return NO;
     NSString *header=old.length?[[[NSString alloc] initWithData:old encoding:NSUTF8StringEncoding] componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet].firstObject:
-        @"Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|CDN Key!HEX:16|Install Key!HEX:16|IM Size!DEC:4|CDN Path!STRING:0|CDN Hosts!STRING:0|Tags!STRING:0|Armadillo!STRING:0|Last Activated!STRING:0|Version!STRING:0|Keyring!HEX:16|KeyService!STRING:0|Product!STRING:0";
-    NSMutableArray *keys=[NSMutableArray new];for(NSString *column in [header componentsSeparatedByString:@"|"])[keys addObject:[column componentsSeparatedByString:@"!"][0]];
+        @"Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|CDN Key!HEX:16|Install Key!HEX:16|IM Size!DEC:4|CDN Path!STRING:0|CDN Hosts!STRING:0|CDN Servers!STRING:0|Tags!STRING:0|Armadillo!STRING:0|Last Activated!STRING:0|Version!STRING:0|Keyring!HEX:16|KeyService!STRING:0|Product!STRING:0";
+    NSMutableArray *columns=[[header componentsSeparatedByString:@"|"] mutableCopy];
+    NSMutableArray *keys=[NSMutableArray new];for(NSString *column in columns)[keys addObject:[column componentsSeparatedByString:@"!"][0]];
+    // Older installs predate these fields. Insert rather than
+    // replace the header so third-party columns and every existing row remain.
+    NSUInteger hosts=[keys indexOfObject:@"CDN Hosts"];
+    if(hosts==NSNotFound) {
+        NSUInteger path=[keys indexOfObject:@"CDN Path"];
+        hosts=path==NSNotFound?columns.count:path+1;
+        [columns insertObject:@"CDN Hosts!STRING:0" atIndex:hosts];
+        [keys insertObject:@"CDN Hosts" atIndex:hosts];
+    }
+    if([keys indexOfObject:@"CDN Servers"]==NSNotFound) {
+        NSUInteger servers=hosts+1;
+        [columns insertObject:@"CDN Servers!STRING:0" atIndex:servers];
+        [keys insertObject:@"CDN Servers" atIndex:servers];
+    }
+    header=[columns componentsJoinedByString:@"|"];
     for(NSString *required in @[@"Product",@"Active",@"Build Key",@"CDN Key",@"Version"])if(![keys containsObject:required])return Fail(error,@"Unsupported installation metadata columns.");
     NSMutableArray *updated=[NSMutableArray new];NSMutableDictionary *entry=nil;
     for(NSDictionary *row in rows) {
         if([row[@"Product"] isEqual:plan[@"product"]]) { if(entry)return Fail(error,@"Ambiguous installed product rows.");entry=[row mutableCopy]; }
         else [updated addObject:row];
     }
-    if(!entry)entry=[NSMutableDictionary new];
-    NSDictionary *v=plan[@"version"]; NSArray *install=Words(plan[@"config"][@"install"]), *sizes=Words(plan[@"config"][@"install-size"]);
-    if(install.count!=2 || sizes.count!=2)return Fail(error,@"Invalid install metadata.");
-    [entry addEntriesFromDictionary:@{@"Product":plan[@"product"],@"Branch":plan[@"region"],@"Active":@"1",
-        @"Build Key":v[@"BuildConfig"],@"CDN Key":v[@"CDNConfig"],@"Version":v[@"VersionsName"],
-        @"Install Key":install[1],@"IM Size":sizes[1],@"CDN Path":@"tpr/wow",@"CDN Hosts":[NSURL URLWithString:plan[@"cdn"]].host,
-        @"Tags":[NSString stringWithFormat:@"OSX arm64 %@ %@ speech?:OSX arm64 %@ %@ text?",[plan[@"region"] uppercaseString],plan[@"locale"],[plan[@"region"] uppercaseString],plan[@"locale"]]}];
+    NSString *cdnHosts=plan[@"cdnHosts"], *cdnServers=plan[@"cdnServers"];
+    if(![cdnHosts isKindOfClass:NSString.class] || ![cdnServers isKindOfClass:NSString.class] ||
+       !Words(cdnHosts).count || !Words(cdnServers).count)return Fail(error,@"Missing CDN metadata in the update plan.");
+    if(repairOnly) {
+        // Recheck under the update lock: a concurrent updater may have replaced
+        // the installation since inspection. Do not downgrade its metadata or
+        // rewrite the user's tags, region, install keys or other existing fields.
+        if(!entry || !TKWoWBuildCurrent(rows,plan[@"product"],plan[@"version"]))
+            return Fail(error,@"The installed build changed. Check for updates again.");
+    } else {
+        if(!entry)entry=[NSMutableDictionary new];
+        NSDictionary *v=plan[@"version"]; NSArray *install=Words(plan[@"config"][@"install"]), *sizes=Words(plan[@"config"][@"install-size"]);
+        if(install.count!=2 || sizes.count!=2)return Fail(error,@"Invalid install metadata.");
+        [entry addEntriesFromDictionary:@{@"Product":plan[@"product"],@"Branch":plan[@"region"],@"Active":@"1",
+            @"Build Key":v[@"BuildConfig"],@"CDN Key":v[@"CDNConfig"],@"Version":v[@"VersionsName"],
+            @"Install Key":install[1],@"IM Size":sizes[1],@"CDN Path":@"tpr/wow",
+            @"Tags":[NSString stringWithFormat:@"OSX arm64 %@ %@ speech?:OSX arm64 %@ %@ text?",[plan[@"region"] uppercaseString],plan[@"locale"],[plan[@"region"] uppercaseString],plan[@"locale"]]}];
+    }
+    [entry addEntriesFromDictionary:@{@"CDN Hosts":cdnHosts,@"CDN Servers":cdnServers}];
     [updated addObject:entry];NSMutableString *text=[[header stringByAppendingString:@"\n"] mutableCopy];
     for(NSDictionary *row in updated) {
         NSMutableArray *values=[NSMutableArray new];
@@ -154,6 +182,17 @@ static BOOL ValidCapacity(NSNumber *capacity) {
         [text appendFormat:@"%@\n",[values componentsJoinedByString:@"|"]];
     }
     return SafeWrite(root,@".build.info",[text dataUsingEncoding:NSUTF8StringEncoding],error);
+}
+- (BOOL)repairBuildInfoForPlan:(NSDictionary *)plan root:(NSString *)root error:(NSError **)error {
+    if(!root.isAbsolutePath || ![plan[@"product"] isKindOfClass:NSString.class] ||
+       ![plan[@"version"] isKindOfClass:NSDictionary.class])return Fail(error,@"Invalid installation metadata repair.");
+    if([self cancelled:error])return NO;
+    root=root.stringByResolvingSymlinksInPath;
+    int lock=TKWoWAcquireUpdateLock(root,error);if(lock<0)return NO;
+    BOOL success=NO;
+    @try { if(![self cancelled:error])success=[self writeBuildInfo:plan root:root repairOnly:YES error:error]; }
+    @finally { close(lock); }
+    return success;
 }
 - (BOOL)updatePlan:(NSDictionary *)plan root:(NSString *)root progress:(void (^)(NSString *,uint64_t,uint64_t))progress error:(NSError **)error {
     _verificationBytesRead=0;_verificationBytesReused=0;
@@ -272,7 +311,7 @@ static BOOL ValidCapacity(NSNumber *capacity) {
         if(![store checkpoint:&failure])return NO;
         if(![store saveVerification:&failure])return NO;
         NSData *flavor=[[NSString stringWithFormat:@"Product Flavor!STRING:0\n%@\n",plan[@"product"]] dataUsingEncoding:NSUTF8StringEncoding];
-        if(!SafeWrite(stage,Join(folder,@".flavor.info"),flavor,&failure) || ![self writeBuildInfo:plan root:stage error:&failure])return NO;
+        if(!SafeWrite(stage,Join(folder,@".flavor.info"),flavor,&failure) || ![self writeBuildInfo:plan root:stage repairOnly:NO error:&failure])return NO;
         if([self cancelled:&failure])return NO;
         current=[_client versionForProduct:plan[@"product"] region:plan[@"region"] error:&failure];if(!current)return NO;
         if(!SameBuild(current,plan[@"version"]))return Fail(&failure,@"A newer build arrived during the download. Reopen to update to it.");

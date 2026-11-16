@@ -10,7 +10,10 @@ int main(void) {
         NSString *settings=[fixture.directory stringByAppendingPathComponent:@"Config.wtf"];
         assert([@"synthetic settings" writeToFile:settings atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
         TKWoWInstallation *result=TKWoWInspectInstallation(library,product,plan);
-        assert(result.state==TKWoWInstallationReady && result.app==(id)apps[0]);
+        assert(result.state==TKWoWInstallationReady && !result.metadataNeedsRepair && result.app==(id)apps[0]);
+        fixture.omitCDNMetadata=YES; [fixture writeMetadata:0 duplicate:NO]; fixture.omitCDNMetadata=NO;
+        result=TKWoWInspectInstallation(library,product,plan);
+        assert(result.state==TKWoWInstallationReady && result.metadataNeedsRepair);
         NSMutableDictionary *german=[plan mutableCopy]; german[@"locale"]=@"deDE";
         result=TKWoWInspectInstallation(library,product,german);
         assert(result.state==TKWoWInstallationOutdated && result.localeNeedsUpdate);

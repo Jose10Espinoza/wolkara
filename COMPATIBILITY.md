@@ -14,6 +14,32 @@ pull request; say what you tested, on what hardware, with which execution mode
 | Heroes of Might and Magic III: Horn of the Abyss (GOG, Windows x86, with the HD mod) | HotA 1.8.1, HD mod 5.8 | iPad Pro M5, iPadOS 27 | Developer service | New games on scenario maps: adventure map, towns, battles, AI turns with up to eight players over several days, saving and loading, music and sound, mouse and keyboard. Runs through Tolkara's builds of Wine and FEX, with the HD mod's GDI renderer. | Local signing cannot run it (FEX translates the game's code while it runs). About 33 s of memory preparation per launch. A double click is not recognised (Enter opens a selected town). Light grey margins when the HD mod letterboxes the game. Saving fails if launched with the development option `--case-insensitive-files`. Performance not measured. | [`heroes3-hota`](profiles/heroes3-hota) |
 | Cyberpunk 2077 (GOG, macOS arm64) | 2.3.x (buildId 59052989568257053) | iPad Pro M5, iPadOS 27 | Developer service | Experimental software-memory mode completes all 6,540 initializers, main, GOG initialization, archives, scripts and shader caches, creates the game window, and visibly renders the opening cinematic with a Space-to-continue prompt. | Menu content and gameplay unverified. Early presentation samples are about 5 FPS, then settle near 1 FPS in the cinematic, with long pauses. Manual Space presses reach the adapter queue but have not visibly continued the game; routing 4 GiB pools to software passes the earlier Foundation allocation failure and reaches further loading. Loader and call-wrapper unwind support clears the GOG rich-presence abort on the iPad: the call reports its service error and returns, and loading continues. The merged-main run logs a main-menu presence state; visual menu and gameplay validation remain pending. Tests use a 3600-second watchdog timeout and a two-CPU query cap. See [VM investigation](docs/CYBERPUNK_VM.md) and [software-memory experiment](docs/SOFTWARE_MEMORY.md). | [`cyberpunk-2077`](profiles/cyberpunk-2077) |
 
+## Startup fixes for issues #13 and #21 (2026-11-16)
+
+The launcher now writes the complete supported CDN hosts/server metadata on
+fresh installs and repairs missing fields in current installations before Play.
+The repair changes only `.build.info`, rechecks the installed build under the
+update lock and preserves other products, tags, settings and addon files.
+This adapts John Klockenkemper's WolkaraForever #24 for Wolkara #13.
+
+CaptainXannath's PR #21 is merged in full: externally prepared image memory is
+zeroed before placement, without clearing the reserved tail. It also adds the
+experimental `tools/package_external_jit_ipa.sh` script.
+
+Validation: the launcher ASan/UBSan suite, its new metadata-only repair fixture,
+and the UIKit launcher fixture on the iPhone 17 simulator pass. The native
+memory ASan/UBSan test passes for adopted dirty pages, bounds, quarantine and
+reserved-tail preservation; External JIT request/detachment tests also pass.
+Both the normal integrated Release build and the External JIT Release package
+build succeed, and both app bundles pass the runtime-bridge, permission and
+signature checks. The packaged IPA passes archive validation and the checks for
+development permission and absence of exported roots, profiles and extensions.
+
+These changes have not been installed or tested with a game on a physical
+device during this integration. In particular, the first-initializer crash in
+Wolkara #22 still needs confirmation from its reporter; these build and fixture
+results are not evidence that every External JIT crash is resolved.
+
 ## Wolkara integration on iPhone Duo (2026-11-05)
 
 The signed Release tree published at `4d1a911` was installed as a separate
@@ -602,3 +628,275 @@ Questie, Improved Forever or their settings. Read back all 65 QuestieDB files
 and the package manifest from the Duo: byte-for-byte verification passed, and
 the existing package records were unchanged. Opened the launcher. Questie
 initialization in the game remains a user check.
+
+## Retired mobile experiment and explicit chat destinations (2026-11-10)
+
+- Removed the experimental WolkaraMobile resource, installer, native command
+  bridge, gesture changes and Settings controls. The existing virtual controller,
+  touch ability circles, camera, keyboard, dictation and addon manager remain.
+- Before Play, the launcher moves installer-owned WolkaraMobile directories
+  (including interrupted installation stages/backups) outside AddOns, retaining
+  their bytes. Foreign same-named addons, other addons and saved layouts are
+  preserved. The retired host flags are cleared; no companion addon is shipped.
+- Typed and speech drafts offer six explicit, chat-colored send destinations:
+  Say, Group, BG, Reply whisper, General 1 and Trade 2. A channel tap uses the
+  command-chat shortcut, replaces the field and queues one Return followed by
+  one closing Escape. It
+  works whether chat was open or closed in the synthetic input fixture. The
+  normal Replace/Send path for other fields is unchanged. Numbers and colors
+  use the default WoW channel convention, not live character configuration.
+- Checks passed: sanitizer addon-retirement tests, launcher migration UI,
+  six-destination input tests (Unicode, open/closed chat, duplicate taps, empty
+  and composing drafts), toolbar speech ownership/late-callback tests, native
+  keyboard/autocorrection, camera, virtual controller/ability circles and
+  localization. The UIKit preview confirms readable per-channel colors.
+- The same-bundle update was installed and launched on the Duo. Device readback
+  confirms WolkaraMobile is archived outside AddOns and ControllerForever,
+  Questie and QuestieDB remain active. The user confirmed Say delivery from
+  both keyboard and voice, but reported that its editor stayed open afterward.
+- Signed generic Release and shipped-bundle validation passed; the bundle has
+  no WolkaraMobile resource. Other channels and the closing correction still
+  require the user's real-game check; synthetic tests do not establish those.
+
+### Channel chat closure follow-up
+
+The first device test left an empty chat after voice and a slash after typed
+input. The shared channel route now ends with the same single Escape as the
+previously verified dictation confirmation. Neither the keyboard nor the speech
+controller adds another Escape. The regression fixture now models an editor
+that stays open after publishing, including the slash residue, instead of
+assuming Return closed it. It checks one message, cleared text, a closed editor,
+no menu activation and a matching key-up after every closing key.
+
+## Background graphics resume (2026-11-10)
+
+The Duo user reported missing terrain, model materials and map content after
+returning from another app. Some resources return after waiting or moving, while
+others need another entry. Existing logs show the old 5 FPS background rendering
+path, but no recorded Metal command failure; they do not establish the cause.
+
+The Metal adapter now pauses drawable acquisition and command-buffer submission
+on deactivation, including upload-only queues. A pending native buffer stays
+with its caller and is submitted once on activation, with its original resources
+and completion semantics. The main-thread wait delivers lifecycle events. The
+transition gives previously committed commands a bounded opportunity to become
+scheduled; it does not wait for GPU completion or hold UIKit indefinitely behind
+an explicitly enqueued but uncommitted queue entry. Tracking is weak and transient
+collections have a local autorelease pool. The first eight command failures log
+only their error domain/code, without texture contents or application labels.
+
+This replaces a 5 FPS limit that still submitted GPU work in the background,
+where iOS can reject it. See Apple's [Metal background guidance](https://developer.apple.com/documentation/metal/preparing-your-metal-app-to-run-in-the-background).
+It is not a background-network keepalive guarantee: the render loop can now wait
+until activation, and iOS/server suspension and connection rules still apply.
+
+Validation: simulator fixtures pass main/worker resume, all three queue and
+command-buffer factories, forwarding wrappers, bounded scheduling drain, native
+completion/error propagation and weak resource lifetimes. Twelve native private
+texture upload/readback cycles pass across both performance-HUD hook installation
+orders. Shader-library lifetime and memory-journal regressions pass. The clean,
+signed generic iOS Release and shipped-bundle checks pass. Simulator lifecycle
+notifications and textures do not establish recovery in a real backgrounded game;
+the update was installed under the same bundle after the closed-app guard and
+the launcher started. The user subsequently reported that it works fairly well;
+this is user feedback rather than a capture proving the original failure's cause.
+
+## Independent Full/Simple control layouts (2026-11-10)
+
+Full and Simple now have separate persisted control positions, shoulder/stick
+sizes, opacity, shoulder order, haptics, toolbar placement and touch-ability
+layouts (enabled state, scale, anchor, borders, individual bindings, groups and
+circle sizes/visibility). Switching saves the outgoing profile and restores the
+incoming one, releasing held input and pending chords while keeping the same
+connected controller. Settings identifies the edited profile. Reset affects only
+the selected layout; the performance HUD remains a global preference.
+
+Both profiles are initialized from the existing settings before either can be
+edited. Existing identity-based Simple LB/RB positions survive, and legacy data
+is retained for rollback. Toolbar positions retain their fixed spacing and top/
+bottom edge anchors across resizing; if a window cannot fit the arrangement,
+its temporary fallback does not overwrite the saved profile.
+
+Model tests pass migration, first visit after editing the other profile, all
+appearance options, toolbar/ability independence, relaunch, reset and global
+HUD updates through stale profile objects. The native virtual-controller fixture
+passes repeated profile switches, restored geometry/appearance/settings/abilities
+and held-button cancellation without reconnection. Existing ability input/layout,
+controller lifecycle, toolbar resize/edit isolation, global HUD hide/show,
+localization and signed generic iOS Release/bundle checks pass. The update was
+installed on the Duo under the same bundle after the closed-app guard, preserving
+its data, and the launcher started. The user's profile-switching check remains pending.
+
+Ongoing Wolkara work is published directly to `develop`. It retains the prior
+PR's complete history, including chat, retirement of the mobile experiment and
+background graphics recovery; no rewrite or main-branch merge is needed.
+
+## Game Mode declaration (2026-11-11)
+
+Both host Info.plist files now set `LSSupportsGameMode` to true: the integrated
+Wolkara host and the shared diagnostics/External JIT host metadata. This is the
+[documented Game Mode opt-in](https://developer.apple.com/documentation/bundleresources/information-property-list/lssupportsgamemode);
+Apple describes automatic activation for full-screen games in [WWDC25](https://developer.apple.com/videos/play/wwdc2025/209/).
+System eligibility and the user's Game Mode selection still determine activation.
+
+The previous signed integrated app already carried increased-memory-limit and
+extended-virtual-addressing entitlements; these remain present. Game Mode is not
+a new memory entitlement or a guarantee of two additional GiB. The previous Duo
+foreground journal sample contained 3472.9 MiB footprint and 2671.1 MiB available
+(6144 MiB in sum). This is a recorded process memory/headroom observation, not a
+measurement of physical RAM or proof of an exact hard limit.
+
+Both source plists validate. The clean signed generic iOS Release passes the
+shipped-bundle check, declares Game Mode in its final Info.plist and retains both
+memory entitlements in its signature. Installed over the existing Duo app after
+the closed-app guard, preserving data. Launch was refused because the device
+was locked. On-device Game Mode activation and a comparable post-update memory
+sample remain pending; no extra-memory gain is claimed yet.
+
+## Optional Touchbars addon (2026-11-12)
+
+- Launcher Settings → Game tools → Touchbars (experimental) is an opt-in for
+  Forever and Retail. It installs upstream Touchbars 0.7.0 at commit
+  `6ac5bf2e02dba2e2160cf444eef533a4e0118b91` on first enable, verifies the SHA-256
+  of all four install files, and includes the upstream MIT license. No addon
+  Lua or artwork is bundled in this repository or app.
+- The switch reflects the selected edition's managed addon record. Disable and
+  re-enable work offline, retain SavedVariables and do not change Wolkara's
+  native controls. Unmanaged folders and packages containing other addons are
+  not adopted. First install creates AddOns under the shared update lock.
+- `tools/test_touchbars.sh build/touchbars/upstream` passed against separately
+  downloaded original bytes: exact package and license round-trip, tamper and
+  incomplete-download rejection, default off, failed-download recovery, offline
+  toggles, relaunch state, shared-lock rejection, separate editions, preserved
+  pinned copy/layout, and unmanaged/bundled addon protection. Third-party Lua
+  was not executed by these tests.
+- `tools/test_addon_archive.sh` passed (58 archive checks plus the real import,
+  migration, update and rollback lifecycle). `SIMULATOR='iPhone 17'
+  tools/test_wow_launcher_ui.sh` passed, including the new off-by-default switch
+  and its absence for unsupported Classic editions. These use synthetic data.
+- A clean generic Release developer-service build and app-bundle validation
+  passed. Installed over the existing Wolkara bundle on iPhone Duo after a
+  fresh closed-app check; app data was retained and the launcher opened.
+  The device artifact retains pre-existing local diagnostic/audio edits, which
+  are not published as part of this Touchbars change.
+- Touchbars remains off on the device until explicitly enabled. In-game use
+  is not yet verified here. Open `/sptouch` to assign the initially empty
+  buttons; upstream hides normal action bars by default, reversible in
+  More → Default bars. Native controls may overlap its initial positions.
+  Upstream's Retail support has fixture coverage but still awaits live gameplay.
+
+## Touchbars experiment removed (2026-11-12)
+
+- Removed the optional toggle, downloader, archive builder and Touchbars-only
+  tests/documentation after the user found the addon too complex in practice.
+  Game tools returns to its original five actions; native controls and layouts
+  are unchanged.
+- A one-time launcher cleanup retires only an exact, managed `SPTouchBars`
+  package before game entry, including a previously disabled copy. It disables
+  the package first, then uses the addon store's removal path to keep a recovery
+  copy outside AddOns. SavedVariables and other addons are preserved. Unmanaged
+  folders and mixed-addon bundles are not changed; a later deliberate reinstall
+  is respected. The cleanup runs after UI restore recovery, outside the outer
+  update lock because the store locks its own operations.
+- Focused native cleanup tests passed with AddressSanitizer/UndefinedBehaviorSanitizer:
+  active/disabled copies, exact backup bytes, saved layout, update-lock rejection,
+  unmanaged/bundled isolation and one-time behavior. The existing legacy cleanup
+  and symlink checks also pass. The iPhone 17 launcher fixture passed, including
+  the original single-section/five-action Game tools screen.
+- A clean generic Release developer-service build and app-bundle validation
+  passed. The device's addon manifest confirmed one active managed Touchbars
+  0.7.0 package before replacement.
+- Installed over the same Wolkara bundle after a fresh closed-app check and
+  opened the launcher. Device verification confirmed the retirement receipt,
+  no SPTouchBars folder in active AddOns, no Touchbars package in the manifest,
+  and byte-for-byte-equivalent records for all other managed addons.
+  The device artifact retains the pre-existing local diagnostic/audio edits;
+  those unchanged edits are excluded from this removal commit.
+
+## Duo foreground job-wait deadlock (2026-11-16)
+
+- Two device crash reports after side-by-side/full-screen transitions show
+  FRONTBOARD `0x8badf00d` scene-update watchdog kills after ten seconds. The
+  main thread is in our `guest_ulock_wait` / `gw_wait` path and a graphics
+  worker is parked in our Metal commit hook. The previous session's memory
+  telemetry has no memory warnings; these two exits are watchdog terminations.
+- Metal now exports an atomic, lock-free pause hint. The runtime uses it
+  alongside the existing shader-wait hint to service the main run loop while
+  the main thread waits for a renderer job. This delivers the activation
+  notification that releases the worker instead of waiting in a cycle.
+  Submissions remain paused until actual activation. The existing restriction
+  to unbounded main-thread compare-and-wait operations, recursion guard,
+  native errors/wakeups and finite timeout behavior are unchanged.
+- The background-pacing fixture now reproduces that circular wait with real
+  kernel waits and synthetic renderer jobs. Replacing the new hint with the
+  previous shader-only/no-shader predicate reproduces the timeout; the fixed
+  version passes six synthetic job cycles and three native Metal upload job
+  waits per run, with the performance hooks installed both before and after
+  the lifecycle hooks. All twelve native texture upload/readback checks pass.
+- Native wait, real run-loop wait and startup-sleep tests pass with ASan/UBSan.
+  A clean generic Release developer-service build and app-bundle validation
+  pass; the shipped Metal adapter exports the lifecycle hint used by the
+  runtime. No third-party executable, input or memory was inspected or changed.
+- Installed over the existing Duo app after a fresh closed-app check and
+  launched successfully, without uninstalling the app. The user subsequently
+  confirmed that the live side-by-side/full-screen check works on the Duo.
+  The device build retains the pre-existing local diagnostic/audio edits;
+  those unchanged edits are excluded from this fix.
+
+## iPhone Duo connection diagnosis (2026-11-07)
+
+- The user reports delayed world interactions while chat continues, with camera
+  rendering still responsive. They explicitly corrected an earlier automatic
+  answer claiming image freezes. The Mac works on the same Wi-Fi, and disabling
+  the performance HUD does not resolve the Duo symptom.
+- An opt-in `--network-health` build was installed in place over Wi-Fi after the
+  user closed the app and the exact-bundle guard confirmed it. The normal
+  launcher was started with that flag; the user started and played the game.
+  The original TCP fixture passed with ASan/UBSan and in the iOS simulator;
+  signed Release and app-bundle checks passed. These validate instrumentation,
+  not a fix for the reported connection failure.
+- During the reported session, anonymous TCP connection 14 received no new
+  counted bytes from t=262 through t=712 seconds (226 samples). Its unread queue
+  was zero throughout, receive windows stayed open, outgoing bytes increased by
+  19,557, and retransmitted packets increased by 11. Another connection received
+  4,720 bytes during that interval. The sampler does not identify chat/world
+  connections and does not inspect endpoints or payloads.
+- Connection 14 then received 510,946 bytes by t=716. Its briefly enlarged unread
+  queue had drained by t=718.1. No further receive-counter plateau of at least
+  20 seconds was seen through t=900, when the diagnostic stopped automatically.
+  This does not establish whether the user's visible symptom fully recovered.
+- This capture provides no evidence of a persistent unread socket backlog during
+  the long gap. It does not distinguish the server, network path or client
+  session as the cause, nor exclude a Wolkara regression. The compared saved
+  network options had no explicit values in either device's Config.wtf; runtime
+  option equivalence was not established. No network-setting workaround or
+  confirmed fix has been applied. Private captures remain in ignored logs.
+
+## iPhone Duo audio and toolbar follow-up (2026-11-05)
+
+The user could play Forever on the iPhone Duo but heard no audio through
+headphones. The device log showed RemoteIO creation succeeding, followed by
+desktop CurrentDevice property 2000 failing with `-10879`, before stream
+initialization. The compatibility handling for device selection and stream
+sample rate had incorrectly depended on `--trace-audio-render`. It now runs in
+ordinary launches; render-buffer observation remains opt-in. The new simulator
+test reproduced that exact failure before the fix and passes device selection,
+invalid-device rejection and stream initialization after it.
+
+The user also reported toolbar buttons losing their spacing in side-by-side
+windows. Customized toolbar positions now use fixed point offsets. Top and
+bottom groups retain their spacing and distance from their respective edge;
+the groups translate together horizontally when necessary to stay visible.
+If an arrangement cannot fit, the default toolbar is shown temporarily without
+overwriting it. Existing normalized positions migrate on first use, so the
+first game launch should use the window size in which they were configured.
+The former format did not retain that reference size.
+
+The toolbar UI fixture reproduced the spacing failure before the fix and now
+passes drag, persistence, resize and round-trip checks, including Duo-sized
+windows. Model tests cover top/bottom groups, safe-area changes, relaunch,
+legacy migration, compact fallback and reset. The translation simulator suite
+and signed Release build pass. The update was installed over the existing app,
+preserving its data. The user then confirmed both audible output through
+headphones and correct button spacing after switching to side-by-side on the
+physical Duo.

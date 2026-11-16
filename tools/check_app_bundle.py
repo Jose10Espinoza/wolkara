@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("app", type=Path)
 args = parser.parse_args()
 app = args.app
+assert not (app / "WolkaraMobile").exists(), "Retired mobile interface must not ship"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info.get("UIFileSharingEnabled"), "Documents must be visible in Files"
 assert info.get("LSSupportsOpeningDocumentsInPlace"), "Files must support moving the installation in place"

@@ -255,11 +255,12 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(localServiceWaiting:)
         name:TKLocalServiceWaiting object:nil];
 #endif
-    // A plain launch (no arguments, or only a per-launch --execution-mode)
+    // A plain launch (optionally a per-launch mode or passive network metrics)
     // shows the WoW home. Any other launch is a development run from
     // tools/: keep its plain status screen and behaviour.
     BOOL plain=YES;
-    for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix]) plain=NO;
+    for(NSUInteger i=1;i<arguments.count;i++)
+        if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix] && ![arguments[i] isEqual:@"--network-health"]) plain=NO;
     if (plain) {
         self.uiSession=YES;
         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
