@@ -751,8 +751,14 @@ static bool guest_handle(const void *handle, size_t *index, bool *first) {
 static void *placed_symbol(size_t index, const char *name, bool first);
 extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
 static bool (*shader_wait_pending)(void);
-static bool shader_pending(void) { return shader_wait_pending && shader_wait_pending(); }
-static void pump_shader_wait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
+static bool (*metal_wait_pending)(void);
+static bool host_wait_pending(void) {
+    // A renderer worker can park at commit while UIKit is inactive. Its main
+    // thread job wait must deliver the foreground notification that releases it.
+    return (shader_wait_pending && shader_wait_pending()) ||
+           (metal_wait_pending && metal_wait_pending());
+}
+static void pump_host_wait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
 #define WAIT_TRACE_CALL(name,address,expression) \
     unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0; \
     GWWaitRecord previous=gwt_begin(tid,name,address); \
@@ -791,7 +797,7 @@ static int guest_ulock_wait(uint32_t operation,void *address,uint64_t value,uint
     pumping=true;
     unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0;
     GWWaitRecord previous=gwt_begin(tid,"__ulock_wait",address);
-    int result=gw_wait(__ulock_wait,operation,address,value,timeout,pthread_main_np()!=0,shader_pending,pump_shader_wait);
+    int result=gw_wait(__ulock_wait,operation,address,value,timeout,pthread_main_np()!=0,host_wait_pending,pump_host_wait);
     int code=errno;gwt_end(tid,previous);errno=code;
     pumping=false; return result;
 }
@@ -1855,6 +1861,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
+    metal_wait_pending=dlsym(RTLD_DEFAULT,"AKMetalMainThreadWaitPending");
     for (size_t i=0;i<carried.count;i++) {
         GuestLibrary *library=&carried.libraries[i];
         GFStats library_stats;

@@ -11,7 +11,7 @@ print(devices[0]["udid"] if devices else "")' "$SIM")
 xcrun simctl bootstatus "$SIM_ID" -b > /dev/null
 mkdir -p build/background-pacing
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-arc -O2 \
-    -Wall -Wextra -Werror -Itranslation/AKSupport translation/AKSupport/AKSupport.m translation/Metal/Presentation.m tests/test_background_pacing.m \
+    -Wall -Wextra -Werror -Itranslation/AKSupport translation/AKSupport/AKSupport.m translation/Metal/Presentation.m runtime/GuestWait.c tests/test_background_pacing.m \
     -framework Foundation -framework UIKit -framework QuartzCore -framework Metal -framework CoreGraphics -framework ImageIO -o build/background-pacing/test
 xcrun simctl spawn "$SIM_ID" "$PWD/build/background-pacing/test"
 xcrun simctl spawn "$SIM_ID" "$PWD/build/background-pacing/test" --hud-first

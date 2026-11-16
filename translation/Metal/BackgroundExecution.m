@@ -7,10 +7,16 @@
 
 static NSCondition *gpuLifecycle;
 static NSHashTable<id<MTLCommandBuffer>> *gpuInFlight;
-static BOOL gpuPaused;
+static atomic_bool gpuPaused;
 static atomic_uint gpuFailures;
 static _Thread_local unsigned gpuCommitDepth;
 static char deviceHooked, queueHooked, commandHooked;
+
+bool AKMetalMainThreadWaitPending(void) {
+    // Taking gpuLifecycle here could block the very UIKit callback we need.
+    // The condition still serializes submissions; this is only a pump hint.
+    return atomic_load_explicit(&gpuPaused,memory_order_relaxed);
+}
 
 // Called with the condition locked. A desktop renderer can run on the UIKit
 // thread; it must keep delivering activation notifications while parked.

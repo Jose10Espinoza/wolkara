@@ -1,8 +1,12 @@
 // Owned synthetic queues and a tiny native Metal texture; no imported client.
 #import "../translation/Metal/BackgroundExecution.m"
 #import "../translation/Metal/BackgroundPacing.m"
+#include "../runtime/GuestWait.h"
 #include <assert.h>
+#include <errno.h>
 #include <string.h>
+extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
+extern int __ulock_wake(uint32_t,void *,uint64_t);
 extern void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device);
 extern void AKEnableMetalFrameStatistics(void);
 void AKInstallRenderDiagnostics(Class cls) { (void)cls; }
@@ -65,6 +69,37 @@ static void active(BOOL value) {
     [NSNotificationCenter.defaultCenter postNotificationName:value?UIApplicationDidBecomeActiveNotification:UIApplicationWillResignActiveNotification object:nil];
 }
 static void waitDone(dispatch_semaphore_t done) { assert(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0); }
+static void pumpMainJobWait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
+static void resumeFromMainJobWait(dispatch_block_t work) {
+    // Regression: UIKit is inactive, a renderer worker parks at commit, and
+    // the main thread waits for that job. Only pumping the queued activation
+    // can break the cycle. No shader request is involved.
+    assert(NSThread.isMainThread && AKMetalMainThreadWaitPending());
+    atomic_uint completed=0;
+    atomic_uint *completion=&completed;
+    dispatch_semaphore_t done=dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ @autoreleasepool {
+        work();
+        atomic_store(completion,1);
+        __ulock_wake(1,completion,0);
+        dispatch_semaphore_signal(done);
+    } });
+    assert(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC))!=0);
+    assert(!atomic_load(&completed));
+    __block unsigned activations=0;
+    [NSTimer scheduledTimerWithTimeInterval:.02 repeats:NO block:^(__unused NSTimer *timer) {
+        assert(AKMetalMainThreadWaitPending() && !atomic_load(completion));
+        active(YES); activations++;
+    }];
+    double start=NSProcessInfo.processInfo.systemUptime;
+    while (!atomic_load(&completed)) {
+        int result=gw_wait(__ulock_wait,1,&completed,0,0,true,AKMetalMainThreadWaitPending,pumpMainJobWait);
+        assert(result==0 || (result==-1 && errno==EINTR));
+    }
+    waitDone(done);
+    assert(activations==1 && !AKMetalMainThreadWaitPending());
+    assert(NSProcessInfo.processInfo.systemUptime-start<1);
+}
 static atomic_uint drawableCalls;
 static id<CAMetalDrawable> fakeDrawable(id receiver,SEL selector) { (void)receiver; (void)selector; atomic_fetch_add(&drawableCalls,1); return nil; }
 static void testDrawableAndMainThread(void) {
@@ -116,6 +151,16 @@ static void testCommands(void) {
     [NSTimer scheduledTimerWithTimeInterval:.02 repeats:NO block:^(__unused NSTimer *timer) { active(YES); }];
     [main commit]; assert(main.commits==1); [main finish];
 
+    // Repeated inactive/active transitions, including forwarding commit hooks.
+    for (unsigned pass=0;pass<6;pass++) {
+        AKTestCommand *job=(id)(pass%2?[queues[0] commandBufferWithUnretainedReferences]:[queues[0] commandBuffer]);
+        job.payload=0x12345678;
+        active(NO);
+        resumeFromMainJobWait(^{ [job commit]; });
+        assert(job.commits==1 && job.payload==0x12345678);
+        [job finish];
+    }
+
     // Lifecycle drain waits for scheduling, not completion, on other queues.
     AKTestCommand *slow=(id)[queues[0] commandBuffer]; slow.schedule=NO; [slow commit];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ slow.status=MTLCommandBufferStatusScheduled; });
@@ -152,11 +197,16 @@ static void testNativeTexture(void) {
         [blit copyFromBuffer:source sourceOffset:0 sourceBytesPerRow:256 sourceBytesPerImage:512 sourceSize:MTLSizeMake(2,2,1) toTexture:texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
         [blit endEncoding];
         active(NO);
-        dispatch_semaphore_t done=dispatch_semaphore_create(0);
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ @autoreleasepool { [upload commit]; dispatch_semaphore_signal(done); } });
-        assert(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC))!=0);
-        assert(upload.status==MTLCommandBufferStatusNotEnqueued);
-        active(YES); waitDone(done); [upload waitUntilCompleted]; assert(upload.status==MTLCommandBufferStatusCompleted);
+        if (pass%2) {
+            resumeFromMainJobWait(^{ [upload commit]; });
+        } else {
+            dispatch_semaphore_t done=dispatch_semaphore_create(0);
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ @autoreleasepool { [upload commit]; dispatch_semaphore_signal(done); } });
+            assert(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC))!=0);
+            assert(upload.status==MTLCommandBufferStatusNotEnqueued);
+            active(YES); waitDone(done);
+        }
+        [upload waitUntilCompleted]; assert(upload.status==MTLCommandBufferStatusCompleted);
         id<MTLCommandBuffer> readback=[queue commandBuffer];
         blit=[readback blitCommandEncoder];
         [blit copyFromTexture:texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(2,2,1) toBuffer:result destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:512];
@@ -169,5 +219,5 @@ int main(void) { @autoreleasepool {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,12*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ fputs("BACKGROUND_GPU_TIMEOUT\n",stderr); _Exit(1); });
     active(YES);
     testDrawableAndMainThread(); testCommands(); testNativeTexture();
-    puts("BACKGROUND_GPU_PASS: main/worker resume, queue variants, bounded drain, lifetimes and six native texture upload/readbacks");
+    puts("BACKGROUND_GPU_PASS: main/worker resume, kernel job waits, queue variants, bounded drain, lifetimes and six native texture upload/readbacks");
 } return 0; }

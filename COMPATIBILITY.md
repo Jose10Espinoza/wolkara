@@ -786,3 +786,32 @@ sample remain pending; no extra-memory gain is claimed yet.
   and byte-for-byte-equivalent records for all other managed addons.
   The device artifact retains the pre-existing local diagnostic/audio edits;
   those unchanged edits are excluded from this removal commit.
+
+## Duo foreground job-wait deadlock (2026-11-16)
+
+- Two device crash reports after side-by-side/full-screen transitions show
+  FRONTBOARD `0x8badf00d` scene-update watchdog kills after ten seconds. The
+  main thread is in our `guest_ulock_wait` / `gw_wait` path and a graphics
+  worker is parked in our Metal commit hook. The previous session's memory
+  telemetry has no memory warnings; these two exits are watchdog terminations.
+- Metal now exports an atomic, lock-free pause hint. The runtime uses it
+  alongside the existing shader-wait hint to service the main run loop while
+  the main thread waits for a renderer job. This delivers the activation
+  notification that releases the worker instead of waiting in a cycle.
+  Submissions remain paused until actual activation. The existing restriction
+  to unbounded main-thread compare-and-wait operations, recursion guard,
+  native errors/wakeups and finite timeout behavior are unchanged.
+- The background-pacing fixture now reproduces that circular wait with real
+  kernel waits and synthetic renderer jobs. Replacing the new hint with the
+  previous shader-only/no-shader predicate reproduces the timeout; the fixed
+  version passes six synthetic job cycles and three native Metal upload job
+  waits per run, with the performance hooks installed both before and after
+  the lifecycle hooks. All twelve native texture upload/readback checks pass.
+- Native wait, real run-loop wait and startup-sleep tests pass with ASan/UBSan.
+  A clean generic Release developer-service build and app-bundle validation
+  pass; the shipped Metal adapter exports the lifecycle hint used by the
+  runtime. No third-party executable, input or memory was inspected or changed.
+- Device installation is pending closure of the running app. A live Duo
+  side-by-side/full-screen transition with the fix still needs user validation.
+  The device build retains the pre-existing local diagnostic/audio edits;
+  those unchanged edits are excluded from this fix.
