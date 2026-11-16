@@ -342,6 +342,15 @@ int main(void) {
         NSError *error=nil;
         NSDictionary *plan=[client planForProduct:@"wowf" region:@"eu" locale:@"enUS" error:&error];
         assert(plan && !error && [plan[@"files"] count]==1 && ![plan[@"complete"] boolValue]);
+        assert([plan[@"cdnServers"] isEqual:@"https://level3.ssl.blizzard.com/?fallback=1"]);
+        assert([plan[@"cdnHosts"] isEqual:@"level3.ssl.blizzard.com"]);
+        NSData *originalCDNs=client.responses[@"cdns"];
+        client.responses[@"cdns"]=Text(@"Name|Path|Hosts|Servers\neu|tpr/wow|level3.blizzard.com user@evil.blizzard.com invalid/path.blizzard.com|http://level3.blizzard.com/?maxhosts=8 https://level3.ssl.blizzard.com/?fallback=1 https://evil.test/ https://user:pass@level3.ssl.blizzard.com/ https://level3.ssl.blizzard.com:443/\n");
+        NSDictionary *filtered=[client planForProduct:@"wowf" region:@"eu" locale:@"enUS" error:&error];
+        assert(filtered && [filtered[@"cdnHosts"] isEqual:@"level3.blizzard.com"]);
+        assert([filtered[@"cdnServers"] isEqual:@"http://level3.blizzard.com/?maxhosts=8 https://level3.ssl.blizzard.com/?fallback=1"]);
+        assert([filtered[@"cdn"] isEqual:@"https://level3.ssl.blizzard.com/tpr/wow"]);
+        client.responses[@"cdns"]=originalCDNs;
         NSDictionary *file=plan[@"files"][0];
         NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *path=[client stageFile:file plan:plan directory:directory error:&error];

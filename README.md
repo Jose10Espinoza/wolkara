@@ -22,6 +22,10 @@ The addon store incorporates WolkaraForever's
 adapted to Wolkara's edition selection and shared update lock, with interrupted-update
 recovery fixes. Wolkara's website download flow replaces the API browser and credential setup.
 The imported MIT [license](WolkaraForever-LICENSE) is retained and shipped in the app.
+The startup metadata repair is adapted from John Klockenkemper's
+[WolkaraForever #24](https://github.com/jklock/wolkaraforever/pull/24).
+[CaptainXannath's #21](https://github.com/fJavierLasso/wolkara/pull/21) adds
+zero-initialization of externally prepared memory and experimental External JIT packaging.
 
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 

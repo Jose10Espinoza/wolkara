@@ -14,6 +14,32 @@ pull request; say what you tested, on what hardware, with which execution mode
 | Heroes of Might and Magic III: Horn of the Abyss (GOG, Windows x86, with the HD mod) | HotA 1.8.1, HD mod 5.8 | iPad Pro M5, iPadOS 27 | Developer service | New games on scenario maps: adventure map, towns, battles, AI turns with up to eight players over several days, saving and loading, music and sound, mouse and keyboard. Runs through Tolkara's builds of Wine and FEX, with the HD mod's GDI renderer. | Local signing cannot run it (FEX translates the game's code while it runs). About 33 s of memory preparation per launch. A double click is not recognised (Enter opens a selected town). Light grey margins when the HD mod letterboxes the game. Saving fails if launched with the development option `--case-insensitive-files`. Performance not measured. | [`heroes3-hota`](profiles/heroes3-hota) |
 | Cyberpunk 2077 (GOG, macOS arm64) | 2.3.x (buildId 59052989568257053) | iPad Pro M5, iPadOS 27 | Developer service | Experimental software-memory mode completes all 6,540 initializers, main, GOG initialization, archives, scripts and shader caches, creates the game window, and visibly renders the opening cinematic with a Space-to-continue prompt. | Menu content and gameplay unverified. Early presentation samples are about 5 FPS, then settle near 1 FPS in the cinematic, with long pauses. Manual Space presses reach the adapter queue but have not visibly continued the game; routing 4 GiB pools to software passes the earlier Foundation allocation failure and reaches further loading. Loader and call-wrapper unwind support clears the GOG rich-presence abort on the iPad: the call reports its service error and returns, and loading continues. The merged-main run logs a main-menu presence state; visual menu and gameplay validation remain pending. Tests use a 3600-second watchdog timeout and a two-CPU query cap. See [VM investigation](docs/CYBERPUNK_VM.md) and [software-memory experiment](docs/SOFTWARE_MEMORY.md). | [`cyberpunk-2077`](profiles/cyberpunk-2077) |
 
+## Startup fixes for issues #13 and #21 (2026-11-16)
+
+The launcher now writes the complete supported CDN hosts/server metadata on
+fresh installs and repairs missing fields in current installations before Play.
+The repair changes only `.build.info`, rechecks the installed build under the
+update lock and preserves other products, tags, settings and addon files.
+This adapts John Klockenkemper's WolkaraForever #24 for Wolkara #13.
+
+CaptainXannath's PR #21 is merged in full: externally prepared image memory is
+zeroed before placement, without clearing the reserved tail. It also adds the
+experimental `tools/package_external_jit_ipa.sh` script.
+
+Validation: the launcher ASan/UBSan suite, its new metadata-only repair fixture,
+and the UIKit launcher fixture on the iPhone 17 simulator pass. The native
+memory ASan/UBSan test passes for adopted dirty pages, bounds, quarantine and
+reserved-tail preservation; External JIT request/detachment tests also pass.
+Both the normal integrated Release build and the External JIT Release package
+build succeed, and both app bundles pass the runtime-bridge, permission and
+signature checks. The packaged IPA passes archive validation and the checks for
+development permission and absence of exported roots, profiles and extensions.
+
+These changes have not been installed or tested with a game on a physical
+device during this integration. In particular, the first-initializer crash in
+Wolkara #22 still needs confirmation from its reporter; these build and fixture
+results are not evidence that every External JIT crash is resolved.
+
 ## Wolkara integration on iPhone Duo (2026-11-05)
 
 The signed Release tree published at `4d1a911` was installed as a separate

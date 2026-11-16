@@ -101,6 +101,9 @@ static void TestAddonBrowserPolicy(void) {
         fprintf(stderr,"WoW UIKit TIMEOUT\n"); _Exit(1);
     });
     fixture=[TKFixtureLibrary new];
+    // Start from an older launcher's ready installation. Its metadata must be
+    // repaired by the real controller/updater before Play, without a download.
+    fixture.omitCDNMetadata=YES; [fixture writeMetadata:0 duplicate:NO]; fixture.omitCDNMetadata=NO;
     NSString *retired=[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraTouch"];
     assert([NSFileManager.defaultManager createDirectoryAtPath:retired withIntermediateDirectories:YES attributes:nil error:NULL]);
     assert([@"synthetic addon" writeToFile:[retired stringByAppendingPathComponent:@"Fixture.lua"] atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
@@ -129,6 +132,8 @@ static void TestAddonBrowserPolicy(void) {
     [self performSelector:@selector(checkReady) withObject:nil afterDelay:0.3];
 }
 - (void)checkReady {
+    assert(!TKWoWInspectInstallation((id)fixture,TKWoWProducts()[0],[fixture planForProduct:@"wowf" revision:0]).metadataNeedsRepair);
+    assert(atomic_load(&updates)==0); // Legacy CDN repair did not install/download.
     assert(!self.controller.presentedViewController);
     assert(![NSFileManager.defaultManager fileExistsAtPath:[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraTouch"]]);
     assert(![NSFileManager.defaultManager fileExistsAtPath:[fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/WolkaraMobile"]]);

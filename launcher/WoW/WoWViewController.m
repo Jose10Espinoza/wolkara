@@ -239,6 +239,21 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         NSError *error=nil;
         NSDictionary *plan=[client planForProduct:product[@"id"] region:region locale:locale error:&error];
         TKWoWInstallation *installation=plan?TKWoWInspectInstallation(self->_library,product,plan):nil;
+        // Releases before CDN Servers existed can look current to the launcher
+        // but crash before the first frame. Repair that one metadata file before
+        // offering Play; no game content is downloaded or replaced.
+        if(!error && !client.cancelled && installation.state==TKWoWInstallationReady && installation.metadataNeedsRepair && installation.app) {
+            NSString *directory=[self->_library workingDirectoryForApp:installation.app error:&error];
+            NSString *root=directory?directory.stringByDeletingLastPathComponent:nil;
+            TKWoWUpdater *updater=[[TKWoWUpdater alloc] initWithClient:client];
+            if(!root)error=error?:TKWoWError(@"Could not locate installation metadata.");
+            else if([updater repairBuildInfoForPlan:plan root:root error:&error]) {
+                [self->_library discover];
+                installation=TKWoWInspectInstallation(self->_library,product,plan);
+                if(installation.state!=TKWoWInstallationReady || installation.metadataNeedsRepair)
+                    error=installation.error?:TKWoWError(@"Installation metadata could not be repaired. Check for updates again.");
+            }
+        }
         BOOL updateAttempted=plan && (install || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
         if(updateAttempted) {
             __block NSString *lastPhase=nil;
